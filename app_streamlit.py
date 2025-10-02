@@ -6,7 +6,7 @@ import math
 try:
     import pydeck as pdk
     HAVE_PYDECK = True
-except Exception as _e:
+except Exception:
     HAVE_PYDECK = False
 
 from mtb_agent import (
@@ -76,7 +76,7 @@ set_home_by_key(home_key, LOCATIONS)
 set_tech_bias_override(tech_bias)
 set_prox_override(prox_override)
 
-# Filter set (no special-casing Urmston now)
+# Filter set
 locs = [l for l in LOCATIONS if (not include_keys or l.key in include_keys) and (l.key not in exclude_keys)]
 
 # ---------------- Scoring ----------------
@@ -99,7 +99,7 @@ def score_all(locs, when_dt):
 rows_today = score_all(locs, depart_dt)
 rows_tomorrow = score_all(locs, depart_dt + dt.timedelta(days=1))
 
-# Filter by Max drive for primary picks
+# In-range vs out-of-range
 def in_cap(rows): return [r for r in rows if r.get("drive_est_min", 9999) <= max_drive]
 rows_today_ok = in_cap(rows_today)
 rows_tomorrow_ok = in_cap(rows_tomorrow)
@@ -118,21 +118,14 @@ curve_extra_limit = 60  # minutes
 
 # Curve-ball selection
 def pick_curve_ball(rows_all, rows_filtered, bias, tech_bias, baseline_drive_min: int, limit_extra_min: int):
-    # Exclude the top-5 filtered picks; consider the remaining from the full set (may include over-drive)
     top_keys = {r['key'] for r in rows_filtered[:5]}
     rest = [r for r in rows_all if r['key'] not in top_keys]
-
-    # Constrain curve-ball drive to baseline + limit
     drive_cap = (baseline_drive_min or 0) + (limit_extra_min or 0)
     rest = [r for r in rest if r.get('drive_est_min', 9999) <= drive_cap]
-
-    if not rest:
-        return None
-
+    if not rest: return None
     min_wx = 70.0
     want_elev = {"hills", "steep", "mod_elev"} if bias > 0 else ({"distance", "flat", "gravel"} if bias < 0 else set())
     want_tech = {"technical", "high_tech", "steep"} if tech_bias > 0 else ({"gravel", "flat", "trail_centre", "distance"} if tech_bias < 0 else set())
-
     best = None; best_val = -1
     for r in rest:
         tags = terrain_map.get(r["key"], set())
@@ -140,12 +133,8 @@ def pick_curve_ball(rows_all, rows_filtered, bias, tech_bias, baseline_drive_min
         tech_ok = (not want_tech or (tags & want_tech))
         if r["components"]["weather"] >= min_wx and elev_ok and tech_ok:
             val = r["components"]["weather"] * 1.0 + r["score"] * 0.2
-            if val > best_val:
-                best, best_val = r, val
-
-    if not best:
-        best = max(rest, key=lambda x: x["components"]["weather"])
-    return best
+            if val > best_val: best, best_val = r, val
+    return best or (max(rest, key=lambda x: x["components"]["weather"]) if rest else None)
 
 curve_today = pick_curve_ball(rows_today, rows_today_ok, terrain_bias, tech_bias, base_today_drive, curve_extra_limit) if offer_curve_ball else None
 curve_tomorrow = pick_curve_ball(rows_tomorrow, rows_tomorrow_ok, terrain_bias, tech_bias, base_tom_drive, curve_extra_limit) if offer_curve_ball else None
@@ -187,13 +176,40 @@ def build_features(rows, exclude_key=None):
         })
     return feats
 
+def build_features_out_of_range(rows, exclude_key=None):
+    feats = []
+    for r in rows:
+        if exclude_key and r.get('key') == exclude_key:
+            continue
+        lat, lon = loc_lookup.get(r.get("key"), (None, None))
+        if lat is None:
+            continue
+        radius_m = 800 + 45 * r.get("score", 50)
+        feats.append({
+            "rank": "X",
+            "name": r.get("name", "out-of-range"),
+            "score": r.get("score", 0),
+            "lat": lat, "lon": lon,
+            "radius": radius_m,
+            "color": [128, 0, 128, 0],  # invisible fill; we use stroke only
+            "weather": r.get("components",{}).get("weather", 0),
+            "trail": r.get("components",{}).get("trail", 0),
+            "proximity": r.get("components",{}).get("proximity", 0),
+            "terrain_fit": r.get("components",{}).get("terrain_fit", 0),
+            "secondary": r.get("components",{}).get("secondary", 0),
+            "window": r.get("recommend_window", ""),
+            "drive": r.get("drive_est_min", 0),
+        })
+    return feats
+
 def meters_to_degrees(lat, dx_m, dy_m):
     lat_rad = math.radians(lat)
     dlat = dy_m / 111320.0
     dlon = dx_m / (111320.0 * math.cos(lat_rad) if math.cos(lat_rad) != 0 else 1e-6)
     return dlat, dlon
 
-def triangle_coords(lat, lon, size_m=2500):
+def triangle_coords(lat, lon, size_m=5000):
+    # ~2x bigger than old 2500m
     angles = [90, 210, 330]
     coords = []
     for a in angles:
@@ -215,17 +231,24 @@ curve_for_map = curve_today if map_choice == "Today" else curve_tomorrow
 exclude_key = curve_for_map["key"] if (offer_curve_ball and curve_for_map) else None
 features = build_features(rows_for_map, exclude_key=exclude_key)
 
+out_rows_all = rows_today if map_choice == "Today" else rows_tomorrow
+out_rows_for_map = [r for r in out_rows_all if r.get("drive_est_min", 9999) > max_drive]
+
 if not HAVE_PYDECK:
     st.warning("pydeck is not installed, so the map is hidden.\n\nInstall with:\n\n```bash\npython -m pip install pydeck\n```")
-elif features or (offer_curve_ball and curve_for_map):
-    all_lats = [f["lat"] for f in features]
-    all_lons = [f["lon"] for f in features]
+elif features or (offer_curve_ball and curve_for_map) or out_rows_for_map:
+    # Center on top-3 in-range (plus curve-ball if present), not all points
+    top3 = sorted(features, key=lambda x: x.get("rank", 99))[:3] if features else []
     if offer_curve_ball and curve_for_map:
         clat, clon = loc_lookup.get(curve_for_map["key"], (None, None))
-        if clat is not None:
-            all_lats.append(clat); all_lons.append(clon)
-    avg_lat = sum(all_lats)/len(all_lats) if all_lats else 53.48
-    avg_lon = sum(all_lons)/len(all_lons) if all_lons else -2.3
+    else:
+        clat = clon = None
+    cen_lats = [f["lat"] for f in top3]
+    cen_lons = [f["lon"] for f in top3]
+    if clat is not None:
+        cen_lats.append(clat); cen_lons.append(clon)
+    avg_lat = sum(cen_lats)/len(cen_lats) if cen_lats else 53.48
+    avg_lon = sum(cen_lons)/len(cen_lons) if cen_lons else -2.3
 
     layers = []
     if features:
@@ -240,16 +263,29 @@ elif features or (offer_curve_ball and curve_for_map):
             get_line_color=[0, 0, 0],
             line_width_min_pixels=1,
         )
-    else:
-        layer_points = None
-    if layer_points is not None:
         layers.append(layer_points)
+
+    # Out-of-range hollow purple markers (same size, stroked only)
+    if out_rows_for_map:
+        out_feats = build_features_out_of_range(out_rows_for_map, exclude_key=exclude_key)
+        layer_points_out = pdk.Layer(
+            "ScatterplotLayer",
+            data=out_feats,
+            get_position='[lon, lat]',
+            get_radius="radius",
+            filled=False,
+            stroked=True,
+            get_line_color=[128, 0, 128],
+            line_width_min_pixels=2,
+            pickable=True,
+        )
+        layers.append(layer_points_out)
 
     # Curve-ball triangle (only triangle; no circle)
     if offer_curve_ball and curve_for_map is not None:
         clat, clon = loc_lookup.get(curve_for_map["key"], (None, None))
         if clat is not None:
-            tri = triangle_coords(clat, clon, size_m=2500)
+            tri = triangle_coords(clat, clon, size_m=5000)
             curve_poly = pdk.Layer(
                 "PolygonLayer",
                 data=[{
@@ -261,7 +297,7 @@ elif features or (offer_curve_ball and curve_for_map):
                     "polygon": tri,
                 }],
                 get_polygon="polygon",
-                get_fill_color=[255, 100, 0, 220],
+                get_fill_color=[255, 100, 0, 220],  # orange
                 get_line_color=[0, 0, 0, 255],
                 line_width_min_pixels=2,
                 pickable=True,
@@ -295,7 +331,8 @@ elif features or (offer_curve_ball and curve_for_map):
     with st.expander("Legend / colors"):
         st.markdown(
             "- **#1** green • **#2** yellow • **#3** blue • **#4+** purple\n\n"
-            "- **Orange triangle** = curve ball (≤ +60 min beyond the #1 filtered drive)"
+            "- **Orange triangle** = curve ball (≤ +60 min beyond the #1 filtered drive)\n\n"
+            "- **Hollow purple circle** = outside current Max drive (not considered in main ranking)"
         )
 else:
     st.info("No locations to display with current filters.")

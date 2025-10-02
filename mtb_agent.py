@@ -58,7 +58,6 @@ def load_locations_from_config(cfg: dict) -> List[Location]:
         try:
             locs.append(_location_from_dict(d))
         except Exception:
-            # Skip malformed entries without crashing
             pass
     return locs
 
@@ -96,7 +95,6 @@ def fetch_open_meteo(lat: float, lon: float, timezone: str, past_days: int = 7) 
     cached = _WEATHER_CACHE.get(key)
     if cached and (now - cached[0] < 3600):
         return cached[1]
-
     base = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat, "longitude": lon,
@@ -104,8 +102,7 @@ def fetch_open_meteo(lat: float, lon: float, timezone: str, past_days: int = 7) 
         "daily": "precipitation_sum,sunshine_duration,temperature_2m_max,temperature_2m_min",
         "forecast_days": 2, "past_days": past_days, "timezone": timezone
     }
-    r = requests.get(base, params=params, timeout=20)
-    r.raise_for_status()
+    r = requests.get(base, params=params, timeout=20); r.raise_for_status()
     data = r.json()
     _WEATHER_CACHE[key] = (now, data)
     return data
@@ -116,13 +113,11 @@ def score_weather(hourly: dict, depart: dt.datetime, duration_h: float) -> float
     end = depart + dt.timedelta(hours=duration_h)
     idx = [i for i, t in enumerate(times) if depart <= t < end]
     if not idx: return 50.0
-
     def sel(k): return [hourly[k][i] for i in idx]
     avg_prob = stats.mean(sel("precipitation_probability"))
     avg_mm = stats.mean(sel("precipitation"))
     avg_w = stats.mean(sel("wind_speed_10m")); avg_g = stats.mean(sel("wind_gusts_10m"))
     avg_cloud = stats.mean(sel("cloudcover")); avg_temp = stats.mean(sel("temperature_2m"))
-
     rain_penalty = clamp(avg_prob * (1 + avg_mm), 0, 100)
     rain_score = 100 - map_range(rain_penalty, 0, 100, 0, 60)
     wind_index = avg_w * 0.6 + avg_g * 0.4
@@ -153,7 +148,6 @@ HOME_KEY: Optional[str] = None
 HOME_COORDS: Optional[Tuple[float, float]] = None
 
 def set_home_by_key(key: Optional[str], locs: List[Location]) -> None:
-    """Set the 'start/home' by location key. None = fallback to Urmston (or first)."""
     global HOME_KEY, HOME_COORDS
     HOME_KEY = key
     HOME_COORDS = None
@@ -162,31 +156,22 @@ def set_home_by_key(key: Optional[str], locs: List[Location]) -> None:
             if l.key == key:
                 HOME_COORDS = (l.lat, l.lon)
                 return
-    # fallback to Urmston
     for l in locs:
         if l.key == "urmston":
-            HOME_COORDS = (l.lat, l.lon)
-            HOME_KEY = "urmston"
-            return
-    # final fallback: first
+            HOME_COORDS = (l.lat, l.lon); HOME_KEY = "urmston"; return
     if locs:
-        HOME_COORDS = (locs[0].lat, locs[0].lon)
-        HOME_KEY = locs[0].key
+        HOME_COORDS = (locs[0].lat, locs[0].lon); HOME_KEY = locs[0].key
 
 def drive_minutes_from_home(home_key: str, home_lat: float, home_lon: float, loc: Location, depart_hh: int) -> int:
-    """Estimate drive time from chosen home using straight-line distance (haversine) -> avg road speed, cached hourly."""
     now = time.time()
     k = (home_key or "custom", loc.key, int(depart_hh))
     cached = _DRIVE_CACHE.get(k)
     if cached and (now - cached[0] < 3600):
         return cached[1]
-
     dist_km = _haversine_km(home_lat, home_lon, loc.lat, loc.lon)
-    # Speed model: 65 km/h baseline (mixed A-roads/motorway); clamp to reasonable bounds
     mins = int((dist_km / 65.0) * 60.0)
     mins = int(mins * rush_hour_multiplier(depart_hh))
     mins = max(8, min(600, mins))
-
     _DRIVE_CACHE[k] = (now, mins)
     return mins
 
@@ -195,33 +180,25 @@ def score_proximity(est_drive_min: int, max_drive: int) -> float:
     return map_range(est_drive_min, 0, max_drive, 100, 0)
 
 def score_terrain_fit(terrain_tags: str, pref_bias: float, tech_bias: float, duration_h: float, loc_range: Tuple[float, float]) -> float:
+    """Chilled↔Gnar is 30% more influential than Distance↔Hills."""
     tags = set([t.strip() for t in terrain_tags.split(",")])
     has_hills = any(t in tags for t in ["hills", "steep", "mod_elev"])
     has_distance = any(t in tags for t in ["distance", "flat", "gravel"])
-    has_gnar = any(t in tags for t in ["technical", "high_tech", "trail_centre", "steep"])
-    has_chilled = any(t in tags for t in ["gravel", "flat", "distance"])
-
+    has_gnar = any(t in tags for t in ["technical", "high_tech", "steep"])
+    has_chilled = any(t in tags for t in ["gravel", "flat", "trail_centre", "distance"])
     score = 30.0
     b = clamp(pref_bias, -1.0, 1.0)
-    if b > 0:  # hills wanted
-        score += 25.0 * (1.0 if has_hills else 0.0) * abs(b) - 8.0 * (0.0 if has_hills else 1.0) * abs(b)
-    elif b < 0:  # distance wanted
-        score += 25.0 * (1.0 if has_distance else 0.0) * abs(b) - 8.0 * (0.0 if has_distance else 1.0) * abs(b)
-
+    dist_w = 25.0
+    if b > 0: score += dist_w * (1.0 if has_hills else 0.0) * abs(b) - (dist_w * 0.32) * (0.0 if has_hills else 1.0) * abs(b)
+    elif b < 0: score += dist_w * (1.0 if has_distance else 0.0) * abs(b) - (dist_w * 0.32) * (0.0 if has_distance else 1.0) * abs(b)
     tb = clamp(tech_bias, -1.0, 1.0)
-    if tb > 0:  # gnar
-        score += 25.0 * (1.0 if has_gnar else 0.0) * abs(tb) - 8.0 * (0.0 if has_gnar else 1.0) * abs(tb)
-    elif tb < 0:  # chilled
-        score += 25.0 * (1.0 if has_chilled else 0.0) * abs(tb) - 8.0 * (0.0 if has_chilled else 1.0) * abs(tb)
-
+    tech_w = dist_w * 1.30
+    if tb > 0: score += tech_w * (1.0 if has_gnar else 0.0) * abs(tb) - (tech_w * 0.32) * (0.0 if has_gnar else 1.0) * abs(tb)
+    elif tb < 0: score += tech_w * (1.0 if has_chilled else 0.0) * abs(tb) - (tech_w * 0.32) * (0.0 if has_chilled else 1.0) * abs(tb)
     lo, hi = loc_range
-    if lo - 0.25 <= duration_h <= hi + 0.25:
-        score += 20
-    elif duration_h < lo:
-        score -= map_range(lo - duration_h, 0, 2, 0, 20)
-    else:
-        score -= map_range(duration_h - hi, 0, 2, 0, 20)
-
+    if lo - 0.25 <= duration_h <= hi + 0.25: score += 20
+    elif duration_h < lo: score -= map_range(lo - duration_h, 0, 2, 0, 20)
+    else: score -= map_range(duration_h - hi, 0, 2, 0, 20)
     return clamp(score, 0, 100)
 
 def score_secondary(hourly: dict, depart: dt.datetime, duration_h: float) -> float:
@@ -229,10 +206,9 @@ def score_secondary(hourly: dict, depart: dt.datetime, duration_h: float) -> flo
     end = depart + dt.timedelta(hours=duration_h)
     idx = [i for i, t in enumerate(times) if depart <= t < end]
     if not idx: return 50.0
-
     def sel(key): return [hourly[key][i] for i in idx]
     temps = sel("temperature_2m"); clouds = sel("cloudcover")
-    cloudiness = sum(clouds) / len(clouds)
+    cloudiness = stats.mean(clouds)
     cloud_pen = map_range(cloudiness, 0, 100, 0, 15)
     tmin, tmax = min(temps), max(temps)
     cold_pen = map_range(5 - tmin, 0, 10, 0, 25) if tmin < 5 else 0
@@ -245,7 +221,7 @@ def assemble_reason(loc: Location, wx_s: float, tr_s: float, prox_s: float, terr
                     wind_mean: float, gust_mean: float, rain_prob: float) -> List[str]:
     notes = []
     notes.append(f"Dryness: 7-day rain {precip7:.0f} mm → trail {int(tr_s)}/100.")
-    notes.append(f"Wind: {int(wind_mean)} mph, gust {int(gust_mean)} mph; Weather score {int(wx_s)}.")
+    notes.append(f"Wind: {int(wind_mean)} avg (gust {int(gust_mean)}); Weather score {int(wx_s)}.")
     notes.append(f"Rain probability in window: {int(rain_prob)}%.")
     if drive_est > 0: notes.append(f"Drive: ~{drive_est} min at {depart:%H:%M}. Proximity {int(prox_s)}.")
     else: notes.append("Start from home; no drive needed.")
@@ -270,23 +246,18 @@ def score_location(
     home_key: Optional[str] = None,
     home_coords: Optional[Tuple[float, float]] = None,
 ):
-    # Weather
     data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=7)
     hourly = data["hourly"]; daily = data["daily"]
     wx_s = score_weather(hourly, depart_dt, duration_h)
-
     precip_list = daily.get("precipitation_sum", [])
     precip7 = sum(precip_list[-7:]) if len(precip_list) >= 7 else sum(precip_list)
     tr_s = trail_dryness_score(loc.drainage, season, precip7)
 
-    # Drive estimation from chosen 'home'
     hk = None; hcoords = None
     if home_key is not None or home_coords is not None:
-        hk = home_key or "custom"
-        hcoords = home_coords
+        hk = home_key or "custom"; hcoords = home_coords
     elif HOME_COORDS is not None:
         hk, hcoords = (HOME_KEY or "custom"), HOME_COORDS
-
     if hcoords is not None:
         drive_est = drive_minutes_from_home(hk, hcoords[0], hcoords[1], loc, depart_dt.hour)
     else:
@@ -298,17 +269,13 @@ def score_location(
     terr_s = score_terrain_fit(loc.terrain, terrain_bias, tb, duration_h, loc.duration_range)
     sec_s = score_secondary(hourly, depart_dt, duration_h)
 
-    # Weights (Terrain & Trail emphasized)
     weights = {"weather": 0.25, "trail": 0.35, "proximity": 0.10, "terrain_fit": 0.25, "secondary": 0.05}
-
-    # Terrain+Trail override proximity floor if enabled
     if PROX_OVERRIDE and terr_s >= 70 and tr_s >= 70:
         prox_s = max(prox_s, 50)
 
     total = (weights["weather"] * wx_s + weights["trail"] * tr_s + weights["proximity"] * prox_s +
              weights["terrain_fit"] * terr_s + weights["secondary"] * sec_s)
 
-    # Window stats for notes
     times = [dt.datetime.fromisoformat(t) for t in hourly["time"]]
     end = depart_dt + dt.timedelta(hours=duration_h)
     idx = [i for i, t in enumerate(times) if depart_dt <= t < end]
@@ -333,95 +300,44 @@ def score_location(
         "notes": reason
     }
 
-def render_output(results: List[Dict], top_n: int = 5):
-    print("\nDaily MTB locations — ranked\n")
-    for i, r in enumerate(sorted(results, key=lambda x: x["score"], reverse=True)[:top_n], start=1):
-        print(f"{i}) {r['name']} — {r['score']}")
-        comps = r["components"]
-        print(f"   • Wx {comps['weather']} | Trail {comps['trail']} | Prox {comps['proximity']} | Terrain {comps['terrain_fit']} | Secondary {comps['secondary']}")
-        print(f"   • Window: {r['recommend_window']} | Drive ≈ {r['drive_est_min']} min")
-        for n in r["notes"][:3]:
-            print(f"   • {n}")
-        if len(r["notes"]) > 3:
-            print("   • …")
-        print()
-
 def set_home_default_from_cfg(locs: List[Location], cfg: dict):
-    # Called at import to set home to Urmston by default
     home_label = cfg.get("start_location", "Urmston")
-    # Prefer exact key match first
     for l in locs:
         if l.key == "urmston":
-            set_home_by_key("urmston", locs)
-            return
-    # Fallback: by name contains
+            set_home_by_key("urmston", locs); return
     for l in locs:
         if home_label.lower() in l.name.lower():
-            set_home_by_key(l.key, locs)
-            return
-    # Fallback: first entry
+            set_home_by_key(l.key, locs); return
     if locs:
         set_home_by_key(locs[0].key, locs)
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--depart", type=str, default=None, help='Depart time "HH:MM" local')
-    parser.add_argument("--max-drive", type=int, default=None, help="Max drive minutes")
-    parser.add_argument("--terrain-bias", type=float, default=None, help="Continuous hills(+1) ↔ distance(-1)")
-    parser.add_argument("--tech-bias", type=float, default=None, help="Continuous gnar(+1) ↔ chilled(-1)")
-    parser.add_argument("--duration", type=float, default=None, help="Planned ride hours")
-    parser.add_argument("--home", type=str, default=None, help="Home/start location key (e.g., 'urmston')")
-    parser.add_argument("--season", type=str, default=None, choices=["winter", "spring", "summer", "autumn"])
-    parser.add_argument("--config", type=str, default="config.yaml", help="YAML config path")
-    args = parser.parse_args()
-
-    cfg = load_config(args.config)
-    locs = load_locations_from_config(cfg)
-    if not locs:
-        raise RuntimeError("No locations found in config.yaml under 'locations'.")
-
-    # Set defaults
-    depart_str = args.depart or cfg.get("depart_time", "08:00")
-    max_drive = args.max_drive or int(cfg.get("max_drive_min", 90))
-    terrain_bias = args.terrain_bias if args.terrain_bias is not None else float(cfg.get("preference", {}).get("terrain_bias", 0.0))
-    tech_bias = args.tech_bias if args.tech_bias is not None else float(cfg.get("preference", {}).get("terrain_tech_bias", 0.0))
-    duration_h = args.duration or float(cfg.get("preference", {}).get("duration_hours", 2.5))
-    season = args.season or cfg.get("season", season_from_date(dt.datetime.now().date()))
-
-    # Home / start
-    if args.home:
-        set_home_by_key(args.home, locs)
-    else:
-        set_home_default_from_cfg(locs, cfg)
-
-    hh, mm = parse_time_str(depart_str)
-    depart_dt = dt.datetime.combine(dt.datetime.now().date(), dt.time(hh, mm))
-
-    results = []
-    set_tech_bias_override(tech_bias)
-    for loc in locs:
-        try:
-            r = score_location(loc, depart_dt, duration_h, terrain_bias, max_drive, season, tech_bias=tech_bias)
-            results.append(r)
-        except Exception as e:
-            results.append({
-                "key": loc.key, "name": loc.name, "score": 0.0,
-                "components": {"weather": 0, "trail": 0, "proximity": 0, "terrain_fit": 0, "secondary": 0},
-                "drive_est_min": int(sum(loc.drive_min_typical) / 2),
-                "recommend_window": f"{depart_dt:%H:%M}–{(depart_dt + dt.timedelta(hours=duration_h)):%H:%M}",
-                "notes": [f"Error fetching/scoring: {e}"]
-            })
-
-    print(f"Home: {HOME_KEY} | Depart: {depart_dt:%H:%M} | Max drive: {max_drive} min | Elevation bias: {terrain_bias:+.2f} | Tech bias: {tech_bias:+.2f} | Duration: {duration_h} h | Season: {season}")
-    render_output(results, top_n=5)
-    print("Alternates:")
-    for r in sorted(results, key=lambda x: x["score"], reverse=True)[5:7]:
-        print(f" - {r['name']} — {r['score']}")
 
 # --- Module-level load for Streamlit ---
 _cfg_module = load_config("config.yaml")
 LOCATIONS: List[Location] = load_locations_from_config(_cfg_module) or []
 set_home_default_from_cfg(LOCATIONS, _cfg_module)
+HOME_KEY  # ensure symbol exists for import
+
+def main():
+    # Optional CLI for quick tests
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--home", type=str, default=None)
+    parser.add_argument("--depart", type=str, default="08:00")
+    parser.add_argument("--duration", type=float, default=2.5)
+    parser.add_argument("--max-drive", type=int, default=90)
+    parser.add_argument("--terrain-bias", type=float, default=0.0)
+    parser.add_argument("--tech-bias", type=float, default=0.0)
+    args = parser.parse_args()
+
+    if args.home:
+        set_home_by_key(args.home, LOCATIONS)
+
+    hh, mm = parse_time_str(args.depart)
+    depart_dt = dt.datetime.combine(dt.date.today(), dt.time(hh, mm))
+
+    set_tech_bias_override(args.tech_bias)
+    for loc in LOCATIONS:
+        r = score_location(loc, depart_dt, args.duration, args.terrain_bias, args.max_drive, season_from_date(dt.date.today()), tech_bias=args.tech_bias)
+        print(loc.name, r["score"], r["components"], r["drive_est_min"])
 
 if __name__ == "__main__":
     main()
