@@ -1,7 +1,7 @@
 # App defaults
 start_location: "Urmston, Manchester"
 depart_time: "08:00"
-max_drive_min: 90
+max_drive_min: 360
 preference:
   terrain_bias: 0.6       # -1.0 distance … 0 neutral … +1.0 hills
   terrain_tech_bias: 0.4  # -1.0 chilled … 0 neutral … +1.0 gnar
