@@ -270,7 +270,7 @@ def score_location(
 
     precip_list = daily.get("precipitation_sum", [])
     precip7 = sum(precip_list[-7:]) if len(precip_list) >= 7 else sum(precip_list)
-    tr_s = trail_dryness_score(loc.drainage, season, precip7)
+    tr_s = evaluate_trail_dryness(loc.drainage, season, precip_list, end_idx=len(precip_list)-2, window=5)
 
     hk = None; hcoords = None
     if home_key is not None or home_coords is not None:
@@ -331,7 +331,7 @@ def trail_condition_series(loc: Location, season: str, days: int = 10, window: i
     if cached and (now - cached[0] < 3600):
         return cached[1]
 
-    data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=max(20, days + window + 2), forecast_days=0)
+    data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=max(30, days + window + 10), forecast_days=0)
     daily = data.get("daily", {})
     precip = daily.get("precipitation_sum", [])
     if not precip or len(precip) < days + window:
@@ -339,17 +339,97 @@ def trail_condition_series(loc: Location, season: str, days: int = 10, window: i
         _TRAIL_SERIES_CACHE[ck] = (now, res)
         return res
 
+    # We'll compute the last 'days' values ending yesterday (exclude today's final element)
+    upto = len(precip) - 1
+    start = max(window - 1, upto - days)
     series = []
-    upto = len(precip) - 1  # exclude "today"
-    start = max(0, upto - days)
     for end_idx in range(start, upto):
-        start_idx = max(0, end_idx - window + 1)
-        mm5 = sum(precip[start_idx:end_idx + 1])
-        score = trail_dryness_score(loc.drainage, season, mm5)
+        score = evaluate_trail_dryness(loc.drainage, season, precip, end_idx=end_idx, window=window)
         series.append(round(score, 1))
+
     series = series[-days:]
     _TRAIL_SERIES_CACHE[ck] = (now, series)
     return series
+
+
+# ----- New weighted + hard-cap trail dryness evaluation -----
+def _drain_factor(drainage: str) -> float:
+    # Well-draining trail-centre/rocky = 1.0; mixed = 1.2; muddy/moor = 1.5
+    if drainage in ("trail_centre", "rocky"):
+        return 1.0
+    if drainage in ("mixed_long_mud", "moor_slow"):
+        return 1.5
+    return 1.2  # "mixed" fallback
+
+def _season_base_days(season: str) -> float:
+    # Days of dry-ish conditions to allow max=100
+    if season == "summer":
+        return 5.0
+    if season == "winter":
+        return 10.0
+    # spring/autumn
+    return 7.5
+
+def _consecutive_dry_days(daily_mm: list, end_idx: int, dry_thresh_mm: float = 1.0, lookback: int = 20) -> int:
+    """Count consecutive dry-ish days ending at end_idx (inclusive). We interpret 'end_idx' as the last *completed* day.
+    daily_mm is ordered oldest -> newest.
+    """
+    cnt = 0
+    i = end_idx
+    while i >= 0 and cnt < lookback:
+        if daily_mm[i] <= dry_thresh_mm:
+            cnt += 1
+            i -= 1
+        else:
+            break
+    return cnt
+
+def evaluate_trail_dryness(drainage: str, season: str, daily_mm: list, end_idx: int, window: int = 5) -> float:
+    """Compute trail dryness score for a specific day using:
+      - Weighted recent rainfall over a rolling window (yesterday most important)
+      - Hard cap: cannot reach 100 until enough consecutive dry-ish days have elapsed,
+        scaled by drainage and season.
+    daily_mm: list of daily precipitation (mm), oldest -> newest; 'end_idx' is the index of the day we are scoring.
+    window: how many days ending at end_idx to include in the weighted rainfall.
+    """
+    if not daily_mm or end_idx < 0:
+        return 50.0
+
+    # Build weights (most recent day among the window has highest weight).
+    # Default weights for window up to 7, we slice as needed; they sum ~1
+    base_weights = [0.40, 0.25, 0.18, 0.11, 0.06, 0.04, 0.02]
+    w = base_weights[:max(1, min(window, len(base_weights)))]
+    w_sum = sum(w)
+    w = [x / w_sum for x in w]
+
+    # Collect the last 'window' days ending at 'end_idx'
+    idx0 = max(0, end_idx - (len(w) - 1))
+    mm_window = daily_mm[idx0:end_idx + 1]
+    if len(mm_window) < 1:
+        return 50.0
+    # Align weights to mm_window length (if near the beginning of the series)
+    w = w[-len(mm_window):]
+
+    weighted_mm = sum(m * ww for m, ww in zip(mm_window[::-1], w))  # map most recent to highest weight
+
+    # Keep the exponential form but with a gentler k per drainage
+    k_map = {"trail_centre": 0.028, "rocky": 0.032, "mixed": 0.040, "mixed_long_mud": 0.050, "moor_slow": 0.060}
+    k = k_map.get(drainage, 0.040)
+
+    base_score = clamp(100.0 * math.exp(-k * weighted_mm), 0.0, 100.0)
+
+    # Hard cap logic: require enough consecutive dry days (<= 1 mm) to unlock 100
+    base_days = _season_base_days(season)
+    factor = _drain_factor(drainage)
+    days_needed = base_days * factor
+
+    # Count consecutive dry days up to 'end_idx'
+    dry_days = _consecutive_dry_days(daily_mm, end_idx, dry_thresh_mm=1.0, lookback=30)
+
+    # Max achievable score increases from 60 toward 100 linearly with dry days, hits 100 at 'days_needed'
+    cap_max = 60.0 + 40.0 * clamp(dry_days / max(1.0, days_needed), 0.0, 1.0)
+
+    return min(base_score, cap_max)
 
 def set_home_default_from_cfg(locs: List[Location], cfg: dict):
     home_label = cfg.get("start_location", "Urmston")
