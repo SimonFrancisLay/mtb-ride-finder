@@ -1,0 +1,15 @@
+start_location: "Urmston, Manchester"
+depart_time: "08:00"
+max_drive_min: 90
+preference:
+  terrain: "hills"        # deprecated; still supported
+  terrain_bias: 0.6       # -1.0 distance … 0 neutral … +1.0 hills
+  terrain_tech_bias: 0.4  # -1.0 chilled … 0 neutral … +1.0 gnar
+  duration_hours: 2.5
+season: "auto"
+weights:
+  weather: 0.25
+  trail: 0.35
+  proximity: 0.10
+  terrain_fit: 0.25
+  secondary_weather: 0.05
