@@ -101,9 +101,11 @@ def fetch_open_meteo(lat: float, lon: float, timezone: str, past_days: int = 7, 
     params = {
         "latitude": lat, "longitude": lon,
         "hourly": "precipitation_probability,precipitation,wind_speed_10m,wind_gusts_10m,cloudcover,temperature_2m",
-        "daily": "precipitation_sum,sunshine_duration,temperature_2m_max,temperature_2m_min,time",
-        "forecast_days": forecast_days, "past_days": past_days, "timezone": timezone
+        "daily": "precipitation_sum,sunshine_duration,temperature_2m_max,temperature_2m_min",
+        "past_days": past_days, "timezone": timezone
     }
+    if forecast_days and forecast_days > 0:
+        params["forecast_days"] = forecast_days
     r = requests.get(base, params=params, timeout=20); r.raise_for_status()
     data = r.json()
     _WEATHER_CACHE[key] = (now, data)
