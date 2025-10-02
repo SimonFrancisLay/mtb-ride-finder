@@ -1,7 +1,14 @@
 import streamlit as st
 import datetime as dt
 import math
-import pydeck as pdk
+
+# Try to import pydeck; if missing, show a warning but don't crash
+try:
+    import pydeck as pdk
+    HAVE_PYDECK = True
+except Exception as _e:
+    HAVE_PYDECK = False
+
 from mtb_agent import (
     LOCATIONS,
     season_from_date,
@@ -13,10 +20,10 @@ from mtb_agent import (
 
 st.set_page_config(page_title="MTB Ride Options — Manchester", layout="wide")
 
-# Precompute helpers
+# Lookups
+key_to_name = {l.key: l.name for l in LOCATIONS}
 terrain_map = {l.key: set(t.strip() for t in l.terrain.split(",")) for l in LOCATIONS}
 loc_lookup = {l.key: (l.lat, l.lon) for l in LOCATIONS}
-key_to_name = {l.key: l.name for l in LOCATIONS}
 
 st.title("MTB Ride Options — Manchester")
 today = dt.datetime.now().date()
@@ -26,14 +33,14 @@ default_depart = dt.time(8, 0)
 with st.sidebar:
     st.header("Daily knobs")
 
-    # Pick 'Home' / start location (default Urmston if present)
+    # Home / Start location: always include all locations from config
     all_keys = [l.key for l in LOCATIONS]
     default_home_idx = all_keys.index("urmston") if "urmston" in all_keys else 0
     home_key = st.selectbox(
         "Home / Start location",
         all_keys,
         index=default_home_idx,
-        format_func=lambda k: key_to_name[k],
+        format_func=lambda k: key_to_name.get(k, k),
         help="Choose your base for today. Drive times are measured from here."
     )
 
@@ -48,31 +55,31 @@ with st.sidebar:
 
     season = st.selectbox("Season", ["auto", "winter", "spring", "summer", "autumn"], index=0)
 
-    include_keys = st.multiselect("Include only (optional)", options=[l.key for l in LOCATIONS])
-    exclude_keys = st.multiselect("Exclude (optional)", options=[l.key for l in LOCATIONS])
+    include_keys = st.multiselect("Include only (optional)", options=[l.key for l in LOCATIONS], help="If set, only these locations are considered.")
+    exclude_keys = st.multiselect("Exclude (optional)", options=[l.key for l in LOCATIONS], help="These locations will be ignored.")
 
-    include_from_home = st.checkbox("Include from home (Urmston)", value=False, help="Hide Urmston quickly when it's your base.")
     offer_curve_ball = st.checkbox("Offer curve ball", value=True)
-    prox_override = st.checkbox("Let terrain & trail override proximity", value=True, help="If Terrain & Trail are both strong, don't overly penalize distance.")
+    prox_override = st.checkbox(
+        "Let terrain & trail override proximity",
+        value=True,
+        help="If Terrain & Trail are both strong, don't overly penalize distance."
+    )
 
-    st.caption("⚡ Weather and drive estimates update at most once per hour, so slider changes feel snappy. Change 'Home' to plan trips (e.g., Lakes or 7stanes).")
+    st.caption("⚡ Weather and drive estimates update at most once per hour (cached in the backend). Change 'Home' to plan trips (e.g., Lakes or 7stanes).")
 
 # Apply settings
 depart_dt = dt.datetime.combine(today, depart)
 season_val = season_from_date(today) if season == "auto" else season
 
-# Set home / overrides
+# Home / overrides
 set_home_by_key(home_key, LOCATIONS)
 set_tech_bias_override(tech_bias)
 set_prox_override(prox_override)
 
-# Location filtering
+# Filter set (no special-casing Urmston now)
 locs = [l for l in LOCATIONS if (not include_keys or l.key in include_keys) and (l.key not in exclude_keys)]
-if not include_from_home and home_key == "urmston":
-    # When your base is Urmston and you don't want the 'ride from home' option
-    locs = [l for l in locs if l.key != "urmston"]
 
-# ---------------- Scoring helpers ----------------
+# ---------------- Scoring ----------------
 def score_all(locs, when_dt):
     rows = []
     for loc in locs:
@@ -90,18 +97,26 @@ def score_all(locs, when_dt):
     return sorted(rows, key=lambda x: x["score"], reverse=True)
 
 rows_today = score_all(locs, depart_dt)
-rows_tom = score_all(locs, depart_dt + dt.timedelta(days=1))
+rows_tomorrow = score_all(locs, depart_dt + dt.timedelta(days=1))
 
-# ---------------- Filter by Max drive ----------------
-rows_today_ok = [r for r in rows_today if r.get("drive_est_min", 9999) <= max_drive]
-rows_tom_ok   = [r for r in rows_tom   if r.get("drive_est_min", 9999) <= max_drive]
+# Filter by Max drive for primary picks
+def in_cap(rows): return [r for r in rows if r.get("drive_est_min", 9999) <= max_drive]
+rows_today_ok = in_cap(rows_today)
+rows_tomorrow_ok = in_cap(rows_tomorrow)
 
-# Baseline = #1 filtered pick's drive (fallback to best overall or max_drive)
-base_today_drive = (rows_today_ok[0]['drive_est_min'] if rows_today_ok else (rows_today[0]['drive_est_min'] if rows_today else max_drive))
-base_tom_drive   = (rows_tom_ok[0]['drive_est_min']   if rows_tom_ok   else (rows_tom[0]['drive_est_min']   if rows_tom   else max_drive))
+# Baselines for curve-ball (+60 rule)
+def baseline_drive(filtered, allrows):
+    if filtered:
+        return filtered[0]['drive_est_min']
+    if allrows:
+        return allrows[0]['drive_est_min']
+    return max_drive
+
+base_today_drive = baseline_drive(rows_today_ok, rows_today)
+base_tom_drive   = baseline_drive(rows_tomorrow_ok, rows_tomorrow)
 curve_extra_limit = 60  # minutes
 
-# ---------------- Curve-ball logic (≤ baseline + 60) ----------------
+# Curve-ball selection
 def pick_curve_ball(rows_all, rows_filtered, bias, tech_bias, baseline_drive_min: int, limit_extra_min: int):
     # Exclude the top-5 filtered picks; consider the remaining from the full set (may include over-drive)
     top_keys = {r['key'] for r in rows_filtered[:5]}
@@ -133,7 +148,7 @@ def pick_curve_ball(rows_all, rows_filtered, bias, tech_bias, baseline_drive_min
     return best
 
 curve_today = pick_curve_ball(rows_today, rows_today_ok, terrain_bias, tech_bias, base_today_drive, curve_extra_limit) if offer_curve_ball else None
-curve_tom   = pick_curve_ball(rows_tom,   rows_tom_ok,   terrain_bias, tech_bias, base_tom_drive,   curve_extra_limit) if offer_curve_ball else None
+curve_tomorrow = pick_curve_ball(rows_tomorrow, rows_tomorrow_ok, terrain_bias, tech_bias, base_tom_drive, curve_extra_limit) if offer_curve_ball else None
 
 # ---------------- Map helpers ----------------
 def build_features(rows, exclude_key=None):
@@ -145,9 +160,7 @@ def build_features(rows, exclude_key=None):
         if not latlon:
             continue
         lat, lon = latlon
-        # Size: overall score → radius meters
         radius_m = 800 + 45 * r["score"]
-        # Rank colors
         if idx == 1:
             color = [0, 170, 0, 215]        # green
         elif idx == 2:
@@ -181,7 +194,6 @@ def meters_to_degrees(lat, dx_m, dy_m):
     return dlat, dlon
 
 def triangle_coords(lat, lon, size_m=2500):
-    # Equilateral triangle centered at (lat, lon)
     angles = [90, 210, 330]
     coords = []
     for a in angles:
@@ -190,21 +202,22 @@ def triangle_coords(lat, lon, size_m=2500):
         dy = size_m * math.sin(rad)
         dlat, dlon = meters_to_degrees(lat, dx, dy)
         coords.append([lon + dlon, lat + dlat])
-    coords.append(coords[0])  # close polygon
+    coords.append(coords[0])
     return [coords]
 
 # ---------------- Map rendering ----------------
 st.divider()
 st.subheader("Map of recommendations")
 map_choice = st.radio("Show:", ["Today", "Tomorrow"], horizontal=True)
-rows_for_map = rows_today_ok if map_choice == "Today" else rows_tom_ok
-curve_for_map = curve_today if map_choice == "Today" else curve_tom
+rows_for_map = rows_today_ok if map_choice == "Today" else rows_tomorrow_ok
+curve_for_map = curve_today if map_choice == "Today" else curve_tomorrow
 
 exclude_key = curve_for_map["key"] if (offer_curve_ball and curve_for_map) else None
 features = build_features(rows_for_map, exclude_key=exclude_key)
 
-if features or (offer_curve_ball and curve_for_map):
-    # View centering
+if not HAVE_PYDECK:
+    st.warning("pydeck is not installed, so the map is hidden.\n\nInstall with:\n\n```bash\npython -m pip install pydeck\n```")
+elif features or (offer_curve_ball and curve_for_map):
     all_lats = [f["lat"] for f in features]
     all_lons = [f["lon"] for f in features]
     if offer_curve_ball and curve_for_map:
@@ -227,13 +240,16 @@ if features or (offer_curve_ball and curve_for_map):
             get_line_color=[0, 0, 0],
             line_width_min_pixels=1,
         )
+    else:
+        layer_points = None
+    if layer_points is not None:
         layers.append(layer_points)
 
-    # Curve-ball triangle (PolygonLayer only; no circle)
+    # Curve-ball triangle (only triangle; no circle)
     if offer_curve_ball and curve_for_map is not None:
         clat, clon = loc_lookup.get(curve_for_map["key"], (None, None))
         if clat is not None:
-            tri = triangle_coords(clat, clon, size_m=2500)  # larger triangle
+            tri = triangle_coords(clat, clon, size_m=2500)
             curve_poly = pdk.Layer(
                 "PolygonLayer",
                 data=[{
@@ -245,7 +261,7 @@ if features or (offer_curve_ball and curve_for_map):
                     "polygon": tri,
                 }],
                 get_polygon="polygon",
-                get_fill_color=[255, 100, 0, 220],  # orange
+                get_fill_color=[255, 100, 0, 220],
                 get_line_color=[0, 0, 0, 255],
                 line_width_min_pixels=2,
                 pickable=True,
@@ -276,7 +292,6 @@ if features or (offer_curve_ball and curve_for_map):
     )
     st.pydeck_chart(deck, use_container_width=True)
 
-    # Legend
     with st.expander("Legend / colors"):
         st.markdown(
             "- **#1** green • **#2** yellow • **#3** blue • **#4+** purple\n\n"
@@ -288,7 +303,7 @@ else:
 st.divider()
 
 # ---------------- Results tabs ----------------
-def render_list(rows_ok, label, base_drive):
+def render_list(rows_ok, label, base_drive, curve_pick):
     st.subheader(f"Top picks — {label}")
     for i, r in enumerate(rows_ok[:5], start=1):
         with st.container(border=True):
@@ -306,25 +321,17 @@ def render_list(rows_ok, label, base_drive):
     st.subheader(f"Alternates — {label}")
     for r in rows_ok[5:7]:
         st.write(f"- {r['name']} — {r['score']}")
-
-tab1, tab2 = st.tabs(["Today", "Tomorrow"])
-
-with tab1:
-    render_list(rows_today_ok, "Today", base_today_drive := base_today_drive)
-    if offer_curve_ball and curve_today:
-        st.subheader("Curve ball — Today")
-        st.caption(f"Limited to ≤ {curve_extra_limit} min beyond today's #1 drive (~{base_today_drive}+{curve_extra_limit} min).")
-        r = curve_today
+    if offer_curve_ball and curve_pick:
+        st.subheader(f"Curve ball — {label}")
+        st.caption(f"Limited to ≤ {curve_extra_limit} min beyond {label.lower()}'s #1 drive (~{base_drive}+{curve_extra_limit} min).")
+        r = curve_pick
         st.write(f"**{r['name']}** — {r['score']} (Weather {r['components']['weather']}, Terrain fit {r['components']['terrain_fit']})")
         for n in r["notes"][:3]:
             st.write(f"- {n}")
 
-with tab2:
-    render_list(rows_tom_ok, "Tomorrow", base_tom_drive := base_tom_drive)
-    if offer_curve_ball and curve_tom:
-        st.subheader("Curve ball — Tomorrow")
-        st.caption(f"Limited to ≤ {curve_extra_limit} min beyond tomorrow's #1 drive (~{base_tom_drive}+{curve_extra_limit} min).")
-        r = curve_tom
-        st.write(f"**{r['name']}** — {r['score']} (Weather {r['components']['weather']}, Terrain fit {r['components']['terrain_fit']})")
-        for n in r["notes"][:3]:
-            st.write(f"- {n}")
+tab_today, tab_tomorrow = st.tabs(["Today", "Tomorrow"])
+
+with tab_today:
+    render_list(rows_today_ok, "Today", base_today_drive, curve_today)
+with tab_tomorrow:
+    render_list(rows_tomorrow_ok, "Tomorrow", base_tom_drive, curve_tomorrow)
