@@ -296,7 +296,7 @@ def render_map_and_results(rows_all, rows_ok, base_drive, curve_pick, label):
                 map_style=None,
                 tooltip=tooltip,
             )
-            st.pydeck_chart(deck, width="stretch")
+            st.pydeck_chart(deck, use_container_width=True)
 
             with st.expander("Legend / colors"):
                 st.markdown(
@@ -403,7 +403,7 @@ with tab_trails:
                 tooltip={"html": "<b>{name}</b><br/>Trail condition: <b>{score}</b>",
                          "style": {"backgroundColor": "rgba(30,30,30,0.9)", "color": "white"}},
             )
-            st.pydeck_chart(deck, width="stretch")
+            st.pydeck_chart(deck, use_container_width=True)
             st.caption("Projection uses weighted recent rainfall and a drainage/season-based hard cap. Includes today's & tomorrow's forecast rainfall.")
         else:
             st.info("No locations available to display.")
