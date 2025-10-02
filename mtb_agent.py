@@ -264,7 +264,6 @@ def score_location(
     home_coords: Optional[Tuple[float, float]] = None,
     weights: Optional[Dict[str, float]] = None,
 ):
-    # Weather
     data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=15, forecast_days=2)
     hourly = data["hourly"]; daily = data["daily"]
     wx_s = score_weather(hourly, depart_dt, duration_h)
@@ -273,7 +272,6 @@ def score_location(
     precip7 = sum(precip_list[-7:]) if len(precip_list) >= 7 else sum(precip_list)
     tr_s = trail_dryness_score(loc.drainage, season, precip7)
 
-    # Drive estimation
     hk = None; hcoords = None
     if home_key is not None or home_coords is not None:
         hk = home_key or "custom"; hcoords = home_coords
@@ -292,17 +290,14 @@ def score_location(
 
     use_w = weights or WEIGHT_OVERRIDE
     if not use_w:
-        # Default weights; caller may override via set_weight_override or params
         use_w = {"weather": 0.25, "trail": 0.35, "proximity": 0.10, "terrain_fit": 0.25, "secondary": 0.05}
 
-    # Proximity floor override
     if PROX_OVERRIDE and terr_s >= 70 and tr_s >= 70:
         prox_s = max(prox_s, 50)
 
     total = (use_w["weather"] * wx_s + use_w["trail"] * tr_s + use_w["proximity"] * prox_s +
              use_w["terrain_fit"] * terr_s + use_w["secondary"] * sec_s)
 
-    # Window stats for notes
     times = [dt.datetime.fromisoformat(t) for t in hourly["time"]]
     end = depart_dt + dt.timedelta(hours=duration_h)
     idx = [i for i, t in enumerate(times) if depart_dt <= t < end]
@@ -329,7 +324,6 @@ def score_location(
 
 # ----- Trail condition history (10 days based on 5-day rain) -----
 def trail_condition_series(loc: Location, season: str, days: int = 10, window: int = 5) -> List[float]:
-    # Cache key: location key, days, window, season, current hour
     hour_key = dt.datetime.now().strftime("%Y%m%d%H")
     ck = (loc.key + hour_key, days, window, season)
     now = time.time()
@@ -345,17 +339,14 @@ def trail_condition_series(loc: Location, season: str, days: int = 10, window: i
         _TRAIL_SERIES_CACHE[ck] = (now, res)
         return res
 
-    # Use last 'days' days ending yesterday; each value uses previous 'window' days rainfall (incl that day)
     series = []
-    # Exclude today's index (last element), take previous days
-    upto = len(precip) - 1
+    upto = len(precip) - 1  # exclude "today"
     start = max(0, upto - days)
     for end_idx in range(start, upto):
         start_idx = max(0, end_idx - window + 1)
         mm5 = sum(precip[start_idx:end_idx + 1])
         score = trail_dryness_score(loc.drainage, season, mm5)
         series.append(round(score, 1))
-    # Keep only the last 'days'
     series = series[-days:]
     _TRAIL_SERIES_CACHE[ck] = (now, series)
     return series
@@ -374,7 +365,7 @@ def set_home_default_from_cfg(locs: List[Location], cfg: dict):
 # --- Module-level load for Streamlit ---
 _cfg_module = load_config("config.yaml")
 LOCATIONS: List[Location] = load_locations_from_config(_cfg_module) or []
-DEFAULT_WEIGHTS = get_weights_from_config(_cfg_module)
+DEFAULT_WEIGHTS = get_weights_from_config(_cfg_module)  # <-- make available for import
 set_home_default_from_cfg(LOCATIONS, _cfg_module)
 
 # ----- CLI for local testing -----
@@ -394,7 +385,6 @@ def main():
     hh, mm = parse_time_str(args.depart)
     depart_dt = dt.datetime.combine(dt.date.today(), dt.time(hh, mm))
 
-    set_tech_bias_override(args.tech_bias)
     for loc in LOCATIONS:
         r = score_location(loc, depart_dt, args.duration, args.terrain_bias, args.max_drive, season_from_date(dt.date.today()), tech_bias=args.tech_bias)
         print(loc.name, r["score"], r["components"], r["drive_est_min"])

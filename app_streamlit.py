@@ -83,7 +83,6 @@ with st.sidebar:
             w_prox = st.slider("Weight: Proximity", 0.0, 1.0, DEFAULT_WEIGHTS["proximity"], 0.05)
             w_terr = st.slider("Weight: Terrain fit", 0.0, 1.0, DEFAULT_WEIGHTS["terrain_fit"], 0.05)
             w_sec = st.slider("Weight: Secondary", 0.0, 1.0, DEFAULT_WEIGHTS["secondary"], 0.05)
-            # normalise to sum=1
             total = max(1e-6, w_weather + w_trail + w_prox + w_terr + w_sec)
             weights = {
                 "weather": w_weather/total,
@@ -163,7 +162,8 @@ curve_tom   = pick_curve_ball(rows_tom_all,   rows_tom_ok,   terrain_bias, tech_
 def build_features(rows, exclude_key=None):
     feats = []
     for idx, r in enumerate(rows, start=1):
-        if exclude_key and r['key'] == exclude_key: continue
+        if exclude_key and r['key'] == exclude_key:
+            continue
         latlon = loc_lookup.get(r["key"])
         if not latlon:
             continue
@@ -187,9 +187,11 @@ def build_features(rows, exclude_key=None):
 def build_features_out_of_range(rows, exclude_key=None):
     feats = []
     for r in rows:
-        if exclude_key and r.get('key') == exclude_key: continue
+        if exclude_key and r.get('key') == exclude_key:
+            continue
         lat, lon = loc_lookup.get(r.get("key"), (None, None))
-        if lat is None: continue
+        if lat is None:
+            continue
         radius_m = 800 + 45 * r.get("score", 50)
         feats.append({
             "rank": "X", "name": r.get("name", "out-of-range"), "score": r.get("score", 0),
@@ -338,7 +340,6 @@ with tab_trails:
     for loc in locs:
         series = trail_condition_series(loc, season_tc, days=days, window=window)
         data[key_to_name[loc.key]] = series
-    # Build a date index: last 'days' dates up to yesterday
     today_dt = dt.date.today()
     dates = [(today_dt - dt.timedelta(days=(days - i))) for i in range(1, days+1)]
     df = pd.DataFrame(data, index=[d.strftime("%d %b") for d in dates]).T
