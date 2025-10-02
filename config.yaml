@@ -10,7 +10,7 @@ season: "auto"
 
 # All ride locations live here now
 locations:
-  # Original set
+  # --- Original 10 ---
   - key: hayfield
     name: "Dark Peak (Hayfield)"
     lat: 53.377
@@ -121,7 +121,7 @@ locations:
     duration_range: [1.0, 6.0]
     notes: "Home start; flat distance efforts."
 
-  # New additions
+  # --- 7 Extra English locations ---
   - key: hope_valley
     name: "Peak District (Hope Valley / Edale)"
     lat: 53.366
@@ -153,7 +153,7 @@ locations:
     drainage: "mixed"
     mud_sensitivity: "med_high"
     duration_range: [2.0, 5.0]
-    notes: "Steep packhorse trails and off‑piste; rocky bits ok wet; woods get slick."
+    notes: "Steep packhorse trails and off-piste; rocky bits ok wet; woods get slick."
 
   - key: delamere
     name: "Delamere Forest (Cheshire)"
@@ -198,3 +198,81 @@ locations:
     mud_sensitivity: "med"
     duration_range: [1.0, 3.0]
     notes: "Moorland/stone tracks; decent wet tolerance; some peaty bits linger."
+
+  # --- 7stanes in Scotland ---
+  - key: ae_forest
+    name: "7stanes (Ae Forest)"
+    lat: 55.170
+    lon: -3.605
+    drive_min_typical: [160, 180]
+    terrain: "mod_elev,trail_centre,technical"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [2.0, 4.0]
+    notes: "Trail-centre mix with rock features; holds up well in wet."
+
+  - key: glentress
+    name: "7stanes (Glentress)"
+    lat: 55.650
+    lon: -3.130
+    drive_min_typical: [210, 240]
+    terrain: "hills,trail_centre,high_tech"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [2.0, 5.0]
+    notes: "World-class trail-centre riding; red/black loops; very popular."
+
+  - key: innerleithen
+    name: "7stanes (Innerleithen)"
+    lat: 55.620
+    lon: -3.050
+    drive_min_typical: [210, 240]
+    terrain: "steep,technical,trail_centre"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [2.0, 5.0]
+    notes: "Steep technical descents and XC trails; holds up well in rain."
+
+  - key: kirroughtree
+    name: "7stanes (Kirroughtree)"
+    lat: 54.952
+    lon: -4.476
+    drive_min_typical: [180, 210]
+    terrain: "trail_centre,technical"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [2.0, 4.0]
+    notes: "Long, flowing red/black routes; granite rock gardens; excellent in wet."
+
+  - key: dalbeattie
+    name: "7stanes (Dalbeattie)"
+    lat: 54.932
+    lon: -3.814
+    drive_min_typical: [170, 190]
+    terrain: "trail_centre,technical,rocky"
+    drainage: "rocky"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 3.0]
+    notes: "Rock slab features; grippy even when damp."
+
+  - key: mabie
+    name: "7stanes (Mabie)"
+    lat: 55.017
+    lon: -3.663
+    drive_min_typical: [160, 180]
+    terrain: "trail_centre,flowy"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 3.5]
+    notes: "Flowy red/blue trails with forest setting; all-weather surfaces."
+
+  - key: newcastleton
+    name: "7stanes (Newcastleton)"
+    lat: 55.180
+    lon: -2.815
+    drive_min_typical: [150, 170]
+    terrain: "trail_centre,mod_elev"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 3.0]
+    notes: "Shorter but fun loops; ideal stop on longer trips north."
