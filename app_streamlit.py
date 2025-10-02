@@ -20,6 +20,7 @@ from mtb_agent import (
     set_home_by_key,
     set_weight_override,
     trail_condition_series,
+    trail_condition_outlook,
 )
 
 st.set_page_config(page_title="MTB Ride Options — Manchester", layout="wide")
@@ -333,15 +334,80 @@ with tab_tomorrow:
 
 # ---- Trail conditions tab ----
 with tab_trails:
-    st.subheader("Trail conditions — last 10 days (higher = drier)")
-    days = 10; window = 5
-    season_tc = season_val
-    data = {}
-    for loc in locs:
-        series = trail_condition_series(loc, season_tc, days=days, window=window)
-        data[key_to_name[loc.key]] = series
-    today_dt = dt.date.today()
-    dates = [(today_dt - dt.timedelta(days=(days - i))) for i in range(1, days+1)]
-    df = pd.DataFrame(data, index=[d.strftime("%d %b") for d in dates]).T
-    st.dataframe(df.style.background_gradient(cmap="Greens", axis=1), use_container_width=True)
-    st.caption("Each cell is a trail condition score (0–100) for that day, computed from the preceding 5-day rainfall at that location.")
+    sub_hist, sub_out = st.tabs(["History (last 10 days)", "Outlook (today & tomorrow)"])
+
+    with sub_hist:
+        st.subheader("Trail conditions — last 10 days (higher = drier)")
+        days = 10; window = 5
+        season_tc = season_val
+        data_hist = {}
+        for loc in locs:
+            series = trail_condition_series(loc, season_tc, days=days, window=window)
+            data_hist[key_to_name[loc.key]] = series
+        today_dt = dt.date.today()
+        dates = [(today_dt - dt.timedelta(days=(days - i))) for i in range(1, days+1)]
+        df = pd.DataFrame(data_hist, index=[d.strftime("%d %b") for d in dates]).T
+        try:
+            import matplotlib  # ensure availability for Styler gradients
+            styled = df.style.background_gradient(cmap="Greens", axis=1)
+            st.dataframe(styled, width="stretch")
+        except Exception:
+            st.warning("Matplotlib not available — showing table without heatmap shading.")
+            st.dataframe(df, width="stretch")
+        st.caption("Each cell is a trail condition score (0–100) for that day, computed from the preceding 5-day rainfall at that location.")
+
+    with sub_out:
+        st.subheader("Projected trail conditions (includes today's & tomorrow's rainfall)")
+        # Radio to toggle which day to display on map
+        out_day = st.radio("Show projection for:", ["Today", "Tomorrow"], horizontal=True)
+        # Build map data: one point per location, colored by projected trail condition
+        outlook_rows = []
+        for loc in locs:
+            out_scores = trail_condition_outlook(loc, season_val, window=5)
+            score = out_scores["today"] if out_day == "Today" else out_scores["tomorrow"]
+            lat, lon = loc_lookup.get(loc.key, (None, None))
+            if lat is None:
+                continue
+            # Color: map 0→red, 50→yellow, 100→green
+            # Simple interpolation
+            s = max(0.0, min(100.0, score))
+            g = int(255 * (s / 100.0))
+            r = int(255 * (1.0 - s / 100.0))
+            b = 0
+            outlook_rows.append({
+                "name": key_to_name[loc.key],
+                "lat": lat, "lon": lon,
+                "score": round(score, 1),
+                "color": [r, g, b, 220],
+                "radius": 1000 + 30 * s,
+            })
+
+        if not HAVE_PYDECK:
+            st.warning("pydeck is not installed, so the map is hidden. Install with:  
+`python -m pip install pydeck`")
+        elif outlook_rows:
+            layer = pdk.Layer(
+                "ScatterplotLayer",
+                data=outlook_rows,
+                get_position='[lon, lat]',
+                get_radius="radius",
+                get_fill_color="color",
+                pickable=True,
+                stroked=True,
+                get_line_color=[0, 0, 0],
+                line_width_min_pixels=1,
+            )
+            # Center around average of shown points
+            avg_lat = sum([r["lat"] for r in outlook_rows]) / len(outlook_rows)
+            avg_lon = sum([r["lon"] for r in outlook_rows]) / len(outlook_rows)
+            deck = pdk.Deck(
+                layers=[layer],
+                initial_view_state=pdk.ViewState(latitude=avg_lat, longitude=avg_lon, zoom=6.8, pitch=0),
+                map_style=None,
+                tooltip={"html": "<b>{name}</b><br/>Trail condition: <b>{score}</b>",
+                         "style": {"backgroundColor": "rgba(30,30,30,0.9)", "color": "white"}},
+            )
+            st.pydeck_chart(deck, width="stretch")
+            st.caption("Projection uses weighted recent rainfall and a drainage/season-based hard cap. Includes today's & tomorrow's forecast rainfall.")
+        else:
+            st.info("No locations available to display.")
