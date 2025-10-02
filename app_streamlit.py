@@ -225,7 +225,8 @@ tab_today, tab_tomorrow, tab_trails = st.tabs(["Today", "Tomorrow", "Trail condi
 def render_map_and_results(rows_all, rows_ok, base_drive, curve_pick, label):
     # Map first
     if not HAVE_PYDECK:
-        st.warning("pydeck is not installed, so the map is hidden. Install with:  \n`python -m pip install pydeck`")
+        st.warning("""pydeck is not installed, so the map is hidden. Install with:
+`python -m pip install pydeck`""")
     else:
         exclude_key = curve_pick["key"] if curve_pick else None
         features = build_features(rows_ok, exclude_key=exclude_key)
@@ -383,8 +384,8 @@ with tab_trails:
             })
 
         if not HAVE_PYDECK:
-            st.warning("pydeck is not installed, so the map is hidden. Install with:  
-`python -m pip install pydeck`")
+            st.warning("""pydeck is not installed, so the map is hidden. Install with:
+`python -m pip install pydeck`""")
         elif outlook_rows:
             layer = pdk.Layer(
                 "ScatterplotLayer",
