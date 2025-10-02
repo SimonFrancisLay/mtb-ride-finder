@@ -164,7 +164,9 @@ def build_features(rows, exclude_key=None):
     feats = []
     for idx, r in enumerate(rows, start=1):
         if exclude_key and r['key'] == exclude_key: continue
-        latlon = loc_lookup.get(r["key"]); if not latlon: continue
+        latlon = loc_lookup.get(r["key"])
+        if not latlon:
+            continue
         lat, lon = latlon
         radius_m = 800 + 45 * r["score"]
         if idx == 1: color = [0, 170, 0, 215]
@@ -341,4 +343,4 @@ with tab_trails:
     dates = [(today_dt - dt.timedelta(days=(days - i))) for i in range(1, days+1)]
     df = pd.DataFrame(data, index=[d.strftime("%d %b") for d in dates]).T
     st.dataframe(df.style.background_gradient(cmap="Greens", axis=1), use_container_width=True)
-    st.caption("Each cell is a trail condition score (0–100) for that day, computed from the preceding 5-day rainfall at that location.')
+    st.caption("Each cell is a trail condition score (0–100) for that day, computed from the preceding 5-day rainfall at that location.")
