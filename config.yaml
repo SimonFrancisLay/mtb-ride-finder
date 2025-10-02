@@ -1,15 +1,200 @@
+# App defaults
 start_location: "Urmston, Manchester"
 depart_time: "08:00"
 max_drive_min: 90
 preference:
-  terrain: "hills"        # deprecated; still supported
   terrain_bias: 0.6       # -1.0 distance … 0 neutral … +1.0 hills
   terrain_tech_bias: 0.4  # -1.0 chilled … 0 neutral … +1.0 gnar
   duration_hours: 2.5
 season: "auto"
-weights:
-  weather: 0.25
-  trail: 0.35
-  proximity: 0.10
-  terrain_fit: 0.25
-  secondary_weather: 0.05
+
+# All ride locations live here now
+locations:
+  # Original set
+  - key: hayfield
+    name: "Dark Peak (Hayfield)"
+    lat: 53.377
+    lon: -1.944
+    drive_min_typical: [45, 60]
+    terrain: "hills,technical"
+    drainage: "moor_slow"
+    mud_sensitivity: "low_med"
+    duration_range: [1.0, 6.0]
+    notes: "Stays wet in winter once wet; generally rocky; all durations."
+
+  - key: marple
+    name: "Dark Peak (Marple)"
+    lat: 53.394
+    lon: -2.062
+    drive_min_typical: [30, 40]
+    terrain: "hills,technical"
+    drainage: "moor_slow"
+    mud_sensitivity: "med_high"
+    duration_range: [1.0, 2.5]
+    notes: "Muddies with a bit of rain; good start for long routes linking to Hayfield."
+
+  - key: eyam
+    name: "White Peak (Eyam)"
+    lat: 53.282
+    lon: -1.676
+    drive_min_typical: [60, 70]
+    terrain: "hills,some_tech"
+    drainage: "mixed"
+    mud_sensitivity: "med"
+    duration_range: [2.5, 4.0]
+    notes: "Mixed draining rock and muddy sections."
+
+  - key: llandegla
+    name: "North Wales (Llandegla)"
+    lat: 53.066
+    lon: -3.116
+    drive_min_typical: [60, 75]
+    terrain: "mod_elev,high_tech,trail_centre"
+    drainage: "trail_centre"
+    mud_sensitivity: "low_med"
+    duration_range: [1.0, 3.0]
+    notes: "Trail centre; gets wet but remains rideable."
+
+  - key: clwydian
+    name: "North Wales (Clwydian Range)"
+    lat: 53.158
+    lon: -3.220
+    drive_min_typical: [65, 75]
+    terrain: "hills,fun_descents"
+    drainage: "mixed"
+    mud_sensitivity: "med"
+    duration_range: [2.5, 5.0]
+    notes: "Mixed rock/mud; good climbs/descents."
+
+  - key: ladybower
+    name: "Dark Peak (Ladybower)"
+    lat: 53.381
+    lon: -1.730
+    drive_min_typical: [60, 75]
+    terrain: "hills,technical"
+    drainage: "moor_slow"
+    mud_sensitivity: "high"
+    duration_range: [2.5, 5.0]
+    notes: "Great climbs/tech; muddies easily."
+
+  - key: winter_hill
+    name: "West Pennine Moors (Winter Hill)"
+    lat: 53.628
+    lon: -2.513
+    drive_min_typical: [30, 45]
+    terrain: "hills,technical"
+    drainage: "mixed"
+    mud_sensitivity: "med"
+    duration_range: [1.0, 5.0]
+    notes: "Moorland; mixed drainage; some fun tech."
+
+  - key: windermere
+    name: "South Lakes (Windermere)"
+    lat: 54.380
+    lon: -2.907
+    drive_min_typical: [70, 90]
+    terrain: "steep,some_tech"
+    drainage: "mixed_long_mud"
+    mud_sensitivity: "med_high"
+    duration_range: [2.5, 5.0]
+    notes: "Steep climbs; extended muddy sections."
+
+  - key: keswick
+    name: "North Lakes (Keswick)"
+    lat: 54.600
+    lon: -3.140
+    drive_min_typical: [80, 90]
+    terrain: "steep,technical"
+    drainage: "rocky"
+    mud_sensitivity: "low_med"
+    duration_range: [1.5, 3.0]
+    notes: "Rocky; limited mud; great tech descents."
+
+  - key: urmston
+    name: "Mosses & Canals (Urmston)"
+    lat: 53.448
+    lon: -2.362
+    drive_min_typical: [0, 0]
+    terrain: "distance,flat,gravel"
+    drainage: "rocky"
+    mud_sensitivity: "low"
+    duration_range: [1.0, 6.0]
+    notes: "Home start; flat distance efforts."
+
+  # New additions
+  - key: hope_valley
+    name: "Peak District (Hope Valley / Edale)"
+    lat: 53.366
+    lon: -1.816
+    drive_min_typical: [60, 70]
+    terrain: "hills,technical,steep"
+    drainage: "mixed"
+    mud_sensitivity: "med_high"
+    duration_range: [2.5, 5.0]
+    notes: "Big hills; rocky descents (Jacob’s Ladder). Rock drains ok; exposed/windy can be harsh."
+
+  - key: gisburn
+    name: "Gisburn Forest (Lancashire)"
+    lat: 54.004
+    lon: -2.312
+    drive_min_typical: [70, 80]
+    terrain: "mod_elev,high_tech,trail_centre"
+    drainage: "trail_centre"
+    mud_sensitivity: "low_med"
+    duration_range: [1.5, 3.5]
+    notes: "Red/black graded trails; fast flow + rock gardens; rides fine in the wet."
+
+  - key: calder_valley
+    name: "Calder Valley (Hebden Bridge / Tod)"
+    lat: 53.742
+    lon: -2.012
+    drive_min_typical: [50, 65]
+    terrain: "steep,technical,hills"
+    drainage: "mixed"
+    mud_sensitivity: "med_high"
+    duration_range: [2.0, 5.0]
+    notes: "Steep packhorse trails and off‑piste; rocky bits ok wet; woods get slick."
+
+  - key: delamere
+    name: "Delamere Forest (Cheshire)"
+    lat: 53.228
+    lon: -2.689
+    drive_min_typical: [45, 55]
+    terrain: "distance,flat,gravel"
+    drainage: "rocky"
+    mud_sensitivity: "low"
+    duration_range: [1.0, 3.0]
+    notes: "Flatter forest/gravel; sandy soils drain well; great on wet days for distance."
+
+  - key: stoodley_sp
+    name: "South Pennines (Stoodley Pike / Blackstone Edge)"
+    lat: 53.715
+    lon: -2.014
+    drive_min_typical: [45, 55]
+    terrain: "hills,technical"
+    drainage: "mixed"
+    mud_sensitivity: "med_high"
+    duration_range: [2.0, 4.0]
+    notes: "Exposed moorland; rocky slabs ride ok wet; peat sections boggy in winter."
+
+  - key: grizedale
+    name: "Grizedale Forest (South Lakes)"
+    lat: 54.328
+    lon: -3.026
+    drive_min_typical: [80, 90]
+    terrain: "hills,some_tech,trail_centre"
+    drainage: "mixed"
+    mud_sensitivity: "med"
+    duration_range: [3.0, 5.0]
+    notes: "Forest roads + rocky bridleways + centre loops; drains ok; some clay bogs."
+
+  - key: rivington
+    name: "Rivington Pike (West Pennine)"
+    lat: 53.618
+    lon: -2.557
+    drive_min_typical: [35, 45]
+    terrain: "hills,technical"
+    drainage: "mixed"
+    mud_sensitivity: "med"
+    duration_range: [1.0, 3.0]
+    notes: "Moorland/stone tracks; decent wet tolerance; some peaty bits linger."

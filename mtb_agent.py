@@ -11,7 +11,7 @@ import os
 
 LONDON_TZ = "Europe/London"
 TECH_BIAS_OVERRIDE = None
-PROX_OVERRIDE = True  # for Streamlit to inject
+PROX_OVERRIDE = True
 
 @dataclass
 class Location:
@@ -26,28 +26,35 @@ class Location:
     duration_range: Tuple[float, float]
     notes: str
 
-LOCATIONS: List[Location] = [
-    Location("hayfield", "Dark Peak (Hayfield)", 53.377, -1.944, (45, 60), "hills,technical", "moor_slow", "low_med", (1.0, 6.0),
-             "Stays wet in winter once wet; generally rocky; all durations"),
-    Location("marple", "Dark Peak (Marple)", 53.394, -2.062, (30, 40), "hills,technical", "moor_slow", "med_high", (1.0, 2.5),
-             "Muddies with a bit of rain; good start for long routes linking to Hayfield"),
-    Location("eyam", "White Peak (Eyam)", 53.282, -1.676, (60, 70), "hills,some_tech", "mixed", "med", (2.5, 4.0),
-             "Mixed draining rock and muddy sections"),
-    Location("llandegla", "North Wales (Llandegla)", 53.066, -3.116, (60, 75), "mod_elev,high_tech", "trail_centre", "low_med", (1.0, 3.0),
-             "Trail centre; gets wet but rideable"),
-    Location("clwydian", "North Wales (Clwydian Range)", 53.158, -3.220, (65, 75), "hills,fun_descents", "mixed", "med", (2.5, 5.0),
-             "Mixed rock/mud; good climbs/descents"),
-    Location("ladybower", "Dark Peak (Ladybower)", 53.381, -1.730, (60, 75), "hills,technical", "moor_slow", "high", (2.5, 5.0),
-             "Great climbs/tech; muddies easily"),
-    Location("winter_hill", "West Pennine Moors (Winter Hill)", 53.628, -2.513, (30, 45), "hills,technical", "mixed", "med", (1.0, 5.0),
-             "Moorland; mixed drainage; some fun tech"),
-    Location("windermere", "South Lakes (Windermere)", 54.380, -2.907, (70, 90), "steep,some_tech", "mixed_long_mud", "med_high", (2.5, 5.0),
-             "Steep climbs; extended muddy sections"),
-    Location("keswick", "North Lakes (Keswick)", 54.600, -3.140, (80, 90), "steep,technical", "rocky", "low_med", (1.5, 3.0),
-             "Rocky; limited mud; great tech descents"),
-    Location("urmston", "Mosses & Canals (Urmston)", 53.448, -2.362, (0, 0), "distance,flat,gravel", "rocky", "low", (1.0, 6.0),
-             "Home start; flat distance efforts"),
-]
+def load_config(path: str) -> dict:
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r") as f:
+        return yaml.safe_load(f) or {}
+
+def _location_from_dict(d: dict) -> Location:
+    return Location(
+        key=d["key"],
+        name=d["name"],
+        lat=float(d["lat"]),
+        lon=float(d["lon"]),
+        drive_min_typical=(int(d["drive_min_typical"][0]), int(d["drive_min_typical"][1])),
+        terrain=d["terrain"],
+        drainage=d["drainage"],
+        mud_sensitivity=d.get("mud_sensitivity", "med"),
+        duration_range=(float(d["duration_range"][0]), float(d["duration_range"][1])),
+        notes=d.get("notes",""),
+    )
+
+def load_locations_from_config(cfg: dict) -> List[Location]:
+    locs = []
+    for d in cfg.get("locations", []):
+        try:
+            locs.append(_location_from_dict(d))
+        except Exception:
+            # Skip malformed entries
+            pass
+    return locs
 
 def season_from_date(d: dt.date) -> str:
     m = d.month
@@ -146,9 +153,8 @@ def score_secondary(hourly: dict, depart: dt.datetime, duration_h: float) -> flo
     if not idx: return 50.0
     def sel(key): return [hourly[key][i] for i in idx]
     temps = sel("temperature_2m"); clouds = sel("cloudcover")
-    # Penalties rather than bonuses so it won't stick at ~100
     cloudiness = sum(clouds)/len(clouds)
-    cloud_pen = map_range(cloudiness, 0, 100, 0, 15)  # more cloud → more penalty
+    cloud_pen = map_range(cloudiness, 0, 100, 0, 15)
     tmin, tmax = min(temps), max(temps)
     cold_pen = map_range(5 - tmin, 0, 10, 0, 25) if tmin < 5 else 0
     heat_pen = map_range(tmax - 24, 0, 12, 0, 25) if tmax > 24 else 0
@@ -164,10 +170,17 @@ def assemble_reason(loc: Location, wx_s: float, tr_s: float, prox_s: float, terr
     notes.append(f"Rain probability in window: {int(rain_prob)}%.")
     if drive_est > 0: notes.append(f"Drive: ~{drive_est} min at {depart:%H:%M}. Proximity {int(prox_s)}.")
     else: notes.append("Start from home; no drive needed.")
-    if "trail centre" in loc.notes.lower(): notes.append("Trail-centre surfaces stay rideable even when wet.")
-    if loc.key == "marple": notes.append("Marple muddies with only a bit of rain; avoid if you want a cleaner bike.")
-    if loc.key == "ladybower": notes.append("Ladybower muddies easily; pick rocky lines if wet.")
+    if "trail centre" in loc.notes.lower() or "trail_centre" in loc.terrain:
+        notes.append("Trail-centre surfaces stay rideable even when wet.")
+    if "Marple" in loc.name: notes.append("Marple muddies with only a bit of rain; avoid if you want a cleaner bike.")
+    if "Ladybower" in loc.name: notes.append("Ladybower muddies easily; pick rocky lines if wet.")
     return notes
+
+def set_tech_bias_override(v: float):
+    global TECH_BIAS_OVERRIDE; TECH_BIAS_OVERRIDE = v
+
+def set_prox_override(v: bool):
+    global PROX_OVERRIDE; PROX_OVERRIDE = bool(v)
 
 def score_location(loc: Location, depart_dt: dt.datetime, duration_h: float, terrain_bias: float, max_drive: int, season: str, tech_bias: float = None):
     data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=7)
@@ -182,10 +195,11 @@ def score_location(loc: Location, depart_dt: dt.datetime, duration_h: float, ter
     tb = TECH_BIAS_OVERRIDE if TECH_BIAS_OVERRIDE is not None else tech_bias if tech_bias is not None else 0.0
     terr_s = score_terrain_fit(loc.terrain, terrain_bias, tb, duration_h, loc.duration_range)
     sec_s = score_secondary(hourly, depart_dt, duration_h)
+    # Weights: emphasise Trail and Terrain
+    weights = {"weather":0.25, "trail":0.35, "proximity":0.10, "terrain_fit":0.25, "secondary":0.05}
     # Terrain+Trail override proximity floor if enabled
     if PROX_OVERRIDE and terr_s >= 70 and tr_s >= 70:
         prox_s = max(prox_s, 50)
-    weights = {"weather":0.25, "trail":0.35, "proximity":0.10, "terrain_fit":0.25, "secondary":0.05}
     total = (weights["weather"]*wx_s + weights["trail"]*tr_s + weights["proximity"]*prox_s +
              weights["terrain_fit"]*terr_s + weights["secondary"]*sec_s)
     times = [dt.datetime.fromisoformat(t) for t in hourly["time"]]
@@ -202,13 +216,6 @@ def score_location(loc: Location, depart_dt: dt.datetime, duration_h: float, ter
             "components":{"weather": round(wx_s,1),"trail": round(tr_s,1),"proximity": round(prox_s,1),"terrain_fit": round(terr_s,1),"secondary": round(sec_s,1)},
             "drive_est_min": drive_est,"recommend_window": f"{depart_dt:%H:%M}–{(depart_dt + dt.timedelta(hours=duration_h)):%H:%M}","notes": reason}
 
-def load_config(path: str) -> dict:
-    if not os.path.exists(path): return {}
-    with open(path, "r") as f: return yaml.safe_load(f) or {}
-
-def set_tech_bias_override(v: float):
-    global TECH_BIAS_OVERRIDE; TECH_BIAS_OVERRIDE = v
-
 def render_output(results: List[Dict], top_n: int = 5):
     print("\nDaily MTB locations — ranked\n")
     for i, r in enumerate(sorted(results, key=lambda x: x["score"], reverse=True)[:top_n], start=1):
@@ -223,35 +230,29 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--depart", type=str, default=None, help='Depart time "HH:MM" local')
     parser.add_argument("--max-drive", type=int, default=None, help="Max drive minutes")
-    parser.add_argument("--terrain", type=str, default=None, choices=["hills","distance"], help="Preference (DEPRECATED; use --terrain-bias)")
     parser.add_argument("--terrain-bias", type=float, default=None, help="Continuous hills(+1) ↔ distance(-1) preference")
     parser.add_argument("--tech-bias", type=float, default=None, help="Continuous gnar(+1) ↔ chilled(-1) preference")
     parser.add_argument("--duration", type=float, default=None, help="Planned ride hours")
     parser.add_argument("--start", type=str, default=None, help="Start location label")
     parser.add_argument("--season", type=str, default=None, choices=["winter","spring","summer","autumn"])
-    parser.add_argument("--include", type=str, default=None, help="Comma keys to include only")
-    parser.add_argument("--exclude", type=str, default=None, help="Comma keys to exclude")
     parser.add_argument("--config", type=str, default="config.yaml", help="YAML config path")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    locs = load_locations_from_config(cfg)
+    if not locs:
+        raise RuntimeError("No locations found in config.yaml under 'locations'.")
+    # Defaults
     depart_str = args.depart or cfg.get("depart_time", "08:00")
     max_drive = args.max_drive or int(cfg.get("max_drive_min", 90))
-    terrain_pref_legacy = args.terrain or cfg.get("preference", {}).get("terrain", None)
-    terrain_bias = args.terrain_bias
-    if terrain_bias is None:
-        if terrain_pref_legacy == "hills": terrain_bias = 1.0
-        elif terrain_pref_legacy == "distance": terrain_bias = -1.0
-        else: terrain_bias = float(cfg.get("preference", {}).get("terrain_bias", 0.0))
+    terrain_bias = args.terrain_bias if args.terrain_bias is not None else float(cfg.get("preference", {}).get("terrain_bias", 0.0))
     tech_bias = args.tech_bias if args.tech_bias is not None else float(cfg.get("preference", {}).get("terrain_tech_bias", 0.0))
     duration_h = args.duration or float(cfg.get("preference", {}).get("duration_hours", 2.5))
     start_label = args.start or cfg.get("start_location", "Urmston, Manchester")
     today = dt.datetime.now().date()
     season = args.season or cfg.get("season", season_from_date(today))
     hh, mm = parse_time_str(depart_str); depart_dt = dt.datetime.combine(today, dt.time(hh, mm))
-    include_keys = set([s.strip() for s in args.include.split(",")]) if args.include else None
-    exclude_keys = set([s.strip() for s in args.exclude.split(",")]) if args.exclude else set()
-    locs = [loc for loc in LOCATIONS if (include_keys is None or loc.key in include_keys) and (loc.key not in exclude_keys)]
+
     results = []
     set_tech_bias_override(tech_bias)
     for loc in locs:
@@ -267,10 +268,9 @@ def main():
     render_output(results, top_n=5); print("Alternates:")
     for r in sorted(results, key=lambda x: x["score"], reverse=True)[5:7]: print(f" - {r['name']} — {r['score']}")
 
+# --- Module-level load for Streamlit ---
+_cfg_module = load_config("config.yaml")
+LOCATIONS: List[Location] = load_locations_from_config(_cfg_module) or []
+
 if __name__ == "__main__":
     main()
-
-
-def set_prox_override(v: bool):
-    global PROX_OVERRIDE
-    PROX_OVERRIDE = bool(v)
