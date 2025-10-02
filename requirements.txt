@@ -2,3 +2,4 @@ requests
 PyYAML
 streamlit
 pydeck
+matplotlib>=3.8
