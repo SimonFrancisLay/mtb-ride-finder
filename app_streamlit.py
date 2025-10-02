@@ -25,7 +25,7 @@ with st.sidebar:
     st.header("Daily knobs")
     depart = st.time_input("Depart time", value=default_depart)
     # Keep main max-drive slider modest; curve ball can exceed it by rule below
-    max_drive = st.slider("Max drive (min)", 30, 120, 90, 5)
+    max_drive = st.slider("Max drive (min)", 30, 360, 90, 5)
     terrain_bias = st.slider("Preference (distance ↔ hills)", -1.0, 1.0, 0.6, 0.1)
     tech_bias = st.slider("Preference (chilled ↔ gnar)", -1.0, 1.0, 0.4, 0.1)
     duration = st.slider("Ride duration (hours)", 1.0, 6.0, 2.5, 0.5)
