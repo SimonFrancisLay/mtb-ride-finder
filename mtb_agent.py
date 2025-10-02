@@ -13,10 +13,12 @@ import time
 LONDON_TZ = "Europe/London"
 TECH_BIAS_OVERRIDE = None
 PROX_OVERRIDE = True
+WEIGHT_OVERRIDE: Optional[Dict[str, float]] = None  # weather, trail, proximity, terrain_fit, secondary
 
 # --- Hourly caches (TTL ~ 3600s) ---
-_WEATHER_CACHE: Dict[Tuple[float, float, str], Tuple[float, dict]] = {}
+_WEATHER_CACHE: Dict[Tuple[float, float, str, int], Tuple[float, dict]] = {}
 _DRIVE_CACHE: Dict[Tuple[str, str, int], Tuple[float, int]] = {}
+_TRAIL_SERIES_CACHE: Dict[Tuple[str, int, int, str], Tuple[float, List[float]]] = {}
 
 @dataclass
 class Location:
@@ -83,14 +85,14 @@ def map_range(x, a, b, c, d):
     t = clamp(t, 0, 1)
     return c + t * (d - c)
 
-# ---------- Weather (hourly cached) ----------
-def _weather_cache_key(lat: float, lon: float, timezone: str) -> Tuple[float, float, str]:
+# ---------- Weather / data (hourly cached) ----------
+def _weather_cache_key(lat: float, lon: float, timezone: str, past_days: int) -> Tuple[float, float, str, int]:
     rl = round(lat, 2); rlon = round(lon, 2)
     hour_key = dt.datetime.now().strftime("%Y%m%d%H") + timezone
-    return (rl, rlon, hour_key)
+    return (rl, rlon, hour_key, int(past_days))
 
-def fetch_open_meteo(lat: float, lon: float, timezone: str, past_days: int = 7) -> dict:
-    key = _weather_cache_key(lat, lon, timezone)
+def fetch_open_meteo(lat: float, lon: float, timezone: str, past_days: int = 7, forecast_days: int = 2) -> dict:
+    key = _weather_cache_key(lat, lon, timezone, past_days)
     now = time.time()
     cached = _WEATHER_CACHE.get(key)
     if cached and (now - cached[0] < 3600):
@@ -100,7 +102,7 @@ def fetch_open_meteo(lat: float, lon: float, timezone: str, past_days: int = 7) 
         "latitude": lat, "longitude": lon,
         "hourly": "precipitation_probability,precipitation,wind_speed_10m,wind_gusts_10m,cloudcover,temperature_2m",
         "daily": "precipitation_sum,sunshine_duration,temperature_2m_max,temperature_2m_min",
-        "forecast_days": 2, "past_days": past_days, "timezone": timezone
+        "forecast_days": forecast_days, "past_days": past_days, "timezone": timezone
     }
     r = requests.get(base, params=params, timeout=20); r.raise_for_status()
     data = r.json()
@@ -143,7 +145,7 @@ def _haversine_km(lat1, lon1, lat2, lon2):
     c = 2 * asin(sqrt(a))
     return R * c
 
-# ----- Home selection & drive estimation (hourly cached) -----
+# ----- Home & drive estimation (hourly cached) -----
 HOME_KEY: Optional[str] = None
 HOME_COORDS: Optional[Tuple[float, float]] = None
 
@@ -178,6 +180,21 @@ def drive_minutes_from_home(home_key: str, home_lat: float, home_lon: float, loc
 def score_proximity(est_drive_min: int, max_drive: int) -> float:
     if est_drive_min > max_drive: return 0.0
     return map_range(est_drive_min, 0, max_drive, 100, 0)
+
+# ----- Weight override management -----
+def set_weight_override(w: Optional[Dict[str, float]]):
+    global WEIGHT_OVERRIDE
+    WEIGHT_OVERRIDE = w.copy() if w else None
+
+def get_weights_from_config(cfg: dict) -> Dict[str, float]:
+    w = cfg.get("weights", {})
+    return {
+        "weather": float(w.get("weather", 0.25)),
+        "trail": float(w.get("trail", 0.35)),
+        "proximity": float(w.get("proximity", 0.10)),
+        "terrain_fit": float(w.get("terrain_fit", 0.25)),
+        "secondary": float(w.get("secondary", 0.05)),
+    }
 
 def score_terrain_fit(terrain_tags: str, pref_bias: float, tech_bias: float, duration_h: float, loc_range: Tuple[float, float]) -> float:
     """Chilled↔Gnar is 30% more influential than Distance↔Hills."""
@@ -245,14 +262,18 @@ def score_location(
     tech_bias: float = None,
     home_key: Optional[str] = None,
     home_coords: Optional[Tuple[float, float]] = None,
+    weights: Optional[Dict[str, float]] = None,
 ):
-    data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=7)
+    # Weather
+    data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=15, forecast_days=2)
     hourly = data["hourly"]; daily = data["daily"]
     wx_s = score_weather(hourly, depart_dt, duration_h)
+
     precip_list = daily.get("precipitation_sum", [])
     precip7 = sum(precip_list[-7:]) if len(precip_list) >= 7 else sum(precip_list)
     tr_s = trail_dryness_score(loc.drainage, season, precip7)
 
+    # Drive estimation
     hk = None; hcoords = None
     if home_key is not None or home_coords is not None:
         hk = home_key or "custom"; hcoords = home_coords
@@ -269,13 +290,19 @@ def score_location(
     terr_s = score_terrain_fit(loc.terrain, terrain_bias, tb, duration_h, loc.duration_range)
     sec_s = score_secondary(hourly, depart_dt, duration_h)
 
-    weights = {"weather": 0.25, "trail": 0.35, "proximity": 0.10, "terrain_fit": 0.25, "secondary": 0.05}
+    use_w = weights or WEIGHT_OVERRIDE
+    if not use_w:
+        # Default weights; caller may override via set_weight_override or params
+        use_w = {"weather": 0.25, "trail": 0.35, "proximity": 0.10, "terrain_fit": 0.25, "secondary": 0.05}
+
+    # Proximity floor override
     if PROX_OVERRIDE and terr_s >= 70 and tr_s >= 70:
         prox_s = max(prox_s, 50)
 
-    total = (weights["weather"] * wx_s + weights["trail"] * tr_s + weights["proximity"] * prox_s +
-             weights["terrain_fit"] * terr_s + weights["secondary"] * sec_s)
+    total = (use_w["weather"] * wx_s + use_w["trail"] * tr_s + use_w["proximity"] * prox_s +
+             use_w["terrain_fit"] * terr_s + use_w["secondary"] * sec_s)
 
+    # Window stats for notes
     times = [dt.datetime.fromisoformat(t) for t in hourly["time"]]
     end = depart_dt + dt.timedelta(hours=duration_h)
     idx = [i for i, t in enumerate(times) if depart_dt <= t < end]
@@ -300,6 +327,39 @@ def score_location(
         "notes": reason
     }
 
+# ----- Trail condition history (10 days based on 5-day rain) -----
+def trail_condition_series(loc: Location, season: str, days: int = 10, window: int = 5) -> List[float]:
+    # Cache key: location key, days, window, season, current hour
+    hour_key = dt.datetime.now().strftime("%Y%m%d%H")
+    ck = (loc.key + hour_key, days, window, season)
+    now = time.time()
+    cached = _TRAIL_SERIES_CACHE.get(ck)
+    if cached and (now - cached[0] < 3600):
+        return cached[1]
+
+    data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=max(20, days + window + 2), forecast_days=0)
+    daily = data.get("daily", {})
+    precip = daily.get("precipitation_sum", [])
+    if not precip or len(precip) < days + window:
+        res = [50.0] * days
+        _TRAIL_SERIES_CACHE[ck] = (now, res)
+        return res
+
+    # Use last 'days' days ending yesterday; each value uses previous 'window' days rainfall (incl that day)
+    series = []
+    # Exclude today's index (last element), take previous days
+    upto = len(precip) - 1
+    start = max(0, upto - days)
+    for end_idx in range(start, upto):
+        start_idx = max(0, end_idx - window + 1)
+        mm5 = sum(precip[start_idx:end_idx + 1])
+        score = trail_dryness_score(loc.drainage, season, mm5)
+        series.append(round(score, 1))
+    # Keep only the last 'days'
+    series = series[-days:]
+    _TRAIL_SERIES_CACHE[ck] = (now, series)
+    return series
+
 def set_home_default_from_cfg(locs: List[Location], cfg: dict):
     home_label = cfg.get("start_location", "Urmston")
     for l in locs:
@@ -314,11 +374,11 @@ def set_home_default_from_cfg(locs: List[Location], cfg: dict):
 # --- Module-level load for Streamlit ---
 _cfg_module = load_config("config.yaml")
 LOCATIONS: List[Location] = load_locations_from_config(_cfg_module) or []
+DEFAULT_WEIGHTS = get_weights_from_config(_cfg_module)
 set_home_default_from_cfg(LOCATIONS, _cfg_module)
-HOME_KEY  # ensure symbol exists for import
 
+# ----- CLI for local testing -----
 def main():
-    # Optional CLI for quick tests
     parser = argparse.ArgumentParser()
     parser.add_argument("--home", type=str, default=None)
     parser.add_argument("--depart", type=str, default="08:00")
