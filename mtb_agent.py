@@ -101,7 +101,7 @@ def fetch_open_meteo(lat: float, lon: float, timezone: str, past_days: int = 7, 
     params = {
         "latitude": lat, "longitude": lon,
         "hourly": "precipitation_probability,precipitation,wind_speed_10m,wind_gusts_10m,cloudcover,temperature_2m",
-        "daily": "precipitation_sum,sunshine_duration,temperature_2m_max,temperature_2m_min",
+        "daily": "precipitation_sum,sunshine_duration,temperature_2m_max,temperature_2m_min,time",
         "forecast_days": forecast_days, "past_days": past_days, "timezone": timezone
     }
     r = requests.get(base, params=params, timeout=20); r.raise_for_status()
@@ -109,34 +109,53 @@ def fetch_open_meteo(lat: float, lon: float, timezone: str, past_days: int = 7, 
     _WEATHER_CACHE[key] = (now, data)
     return data
 
-# ---------- Scoring ----------
-def score_weather(hourly: dict, depart: dt.datetime, duration_h: float) -> float:
-    times = [dt.datetime.fromisoformat(t) for t in hourly["time"]]
-    end = depart + dt.timedelta(hours=duration_h)
-    idx = [i for i, t in enumerate(times) if depart <= t < end]
-    if not idx: return 50.0
-    def sel(k): return [hourly[k][i] for i in idx]
-    avg_prob = stats.mean(sel("precipitation_probability"))
-    avg_mm = stats.mean(sel("precipitation"))
-    avg_w = stats.mean(sel("wind_speed_10m")); avg_g = stats.mean(sel("wind_gusts_10m"))
-    avg_cloud = stats.mean(sel("cloudcover")); avg_temp = stats.mean(sel("temperature_2m"))
-    rain_penalty = clamp(avg_prob * (1 + avg_mm), 0, 100)
-    rain_score = 100 - map_range(rain_penalty, 0, 100, 0, 60)
-    wind_index = avg_w * 0.6 + avg_g * 0.4
-    wind_score = 100 - map_range(wind_index, 0, 50, 0, 50)
-    sun_score = map_range(100 - avg_cloud, 0, 100, 40, 100)
-    cold_pen = map_range(10 - avg_temp, 0, 15, 0, 25) if avg_temp < 10 else 0
-    heat_pen = map_range(avg_temp - 22, 0, 12, 0, 25) if avg_temp > 22 else 0
-    temp_score = 100 - clamp(cold_pen + heat_pen, 0, 40)
-    return clamp(0.5 * rain_score + 0.3 * wind_score + 0.1 * sun_score + 0.1 * temp_score, 0, 100)
+# ---------- Trail dryness (weighted + hard cap) ----------
+def _drain_factor(drainage: str) -> float:
+    if drainage in ("trail_centre", "rocky"):
+        return 1.0
+    if drainage in ("mixed_long_mud", "moor_slow"):
+        return 1.5
+    return 1.2  # "mixed" fallback
 
-def trail_dryness_score(drainage: str, season: str, precip_7d_mm: float) -> float:
-    season_mult = {"winter": 0.8, "spring": 0.95, "summer": 1.1, "autumn": 0.9}.get(season, 1.0)
-    adj_mm = precip_7d_mm / max(season_mult, 0.1)
-    curves = {"trail_centre": 0.030, "rocky": 0.035, "mixed": 0.045, "mixed_long_mud": 0.055, "moor_slow": 0.065}
-    k = curves.get(drainage, 0.045)
-    return clamp(100 * math.exp(-k * adj_mm), 0, 100)
+def _season_base_days(season: str) -> float:
+    if season == "summer": return 5.0
+    if season == "winter": return 10.0
+    return 7.5  # spring/autumn
 
+def _consecutive_dry_days(daily_mm: list, end_idx: int, dry_thresh_mm: float = 1.0, lookback: int = 30) -> int:
+    cnt = 0
+    i = end_idx
+    while i >= 0 and cnt < lookback:
+        if daily_mm[i] <= dry_thresh_mm:
+            cnt += 1
+            i -= 1
+        else:
+            break
+    return cnt
+
+def evaluate_trail_dryness(drainage: str, season: str, daily_mm: list, end_idx: int, window: int = 5) -> float:
+    if not daily_mm or end_idx < 0:
+        return 50.0
+    base_weights = [0.40, 0.25, 0.18, 0.11, 0.06, 0.04, 0.02]
+    w = base_weights[:max(1, min(window, len(base_weights)))]
+    w_sum = sum(w); w = [x / w_sum for x in w]
+    idx0 = max(0, end_idx - (len(w) - 1))
+    mm_window = daily_mm[idx0:end_idx + 1]
+    if len(mm_window) < 1:
+        return 50.0
+    w = w[-len(mm_window):]
+    weighted_mm = sum(m * ww for m, ww in zip(mm_window[::-1], w))  # most recent gets highest weight
+    k_map = {"trail_centre": 0.028, "rocky": 0.032, "mixed": 0.040, "mixed_long_mud": 0.050, "moor_slow": 0.060}
+    k = k_map.get(drainage, 0.040)
+    base_score = clamp(100.0 * math.exp(-k * weighted_mm), 0.0, 100.0)
+    base_days = _season_base_days(season)
+    factor = _drain_factor(drainage)
+    days_needed = base_days * factor
+    dry_days = _consecutive_dry_days(daily_mm, end_idx, dry_thresh_mm=1.0, lookback=30)
+    cap_max = 60.0 + 40.0 * clamp(dry_days / max(1.0, days_needed), 0.0, 1.0)
+    return min(base_score, cap_max)
+
+# ---------- Drive & proximity ----------
 def _haversine_km(lat1, lon1, lat2, lon2):
     R = 6371.0
     from math import radians, sin, cos, asin, sqrt
@@ -145,7 +164,6 @@ def _haversine_km(lat1, lon1, lat2, lon2):
     c = 2 * asin(sqrt(a))
     return R * c
 
-# ----- Home & drive estimation (hourly cached) -----
 HOME_KEY: Optional[str] = None
 HOME_COORDS: Optional[Tuple[float, float]] = None
 
@@ -196,8 +214,8 @@ def get_weights_from_config(cfg: dict) -> Dict[str, float]:
         "secondary": float(w.get("secondary", 0.05)),
     }
 
+# ---------- Terrain fit & secondary ----------
 def score_terrain_fit(terrain_tags: str, pref_bias: float, tech_bias: float, duration_h: float, loc_range: Tuple[float, float]) -> float:
-    """Chilled↔Gnar is 30% more influential than Distance↔Hills."""
     tags = set([t.strip() for t in terrain_tags.split(",")])
     has_hills = any(t in tags for t in ["hills", "steep", "mod_elev"])
     has_distance = any(t in tags for t in ["distance", "flat", "gravel"])
@@ -237,7 +255,7 @@ def assemble_reason(loc: Location, wx_s: float, tr_s: float, prox_s: float, terr
                     depart: dt.datetime, duration_h: float, drive_est: int, precip7: float,
                     wind_mean: float, gust_mean: float, rain_prob: float) -> List[str]:
     notes = []
-    notes.append(f"Dryness: 7-day rain {precip7:.0f} mm → trail {int(tr_s)}/100.")
+    notes.append(f"Dryness driven by recent rainfall → trail {int(tr_s)}/100.")
     notes.append(f"Wind: {int(wind_mean)} avg (gust {int(gust_mean)}); Weather score {int(wx_s)}.")
     notes.append(f"Rain probability in window: {int(rain_prob)}%.")
     if drive_est > 0: notes.append(f"Drive: ~{drive_est} min at {depart:%H:%M}. Proximity {int(prox_s)}.")
@@ -251,6 +269,27 @@ def set_tech_bias_override(v: float):
 
 def set_prox_override(v: bool):
     global PROX_OVERRIDE; PROX_OVERRIDE = bool(v)
+
+# ---------- Main scoring ----------
+def score_weather(hourly: dict, depart: dt.datetime, duration_h: float) -> float:
+    times = [dt.datetime.fromisoformat(t) for t in hourly["time"]]
+    end = depart + dt.timedelta(hours=duration_h)
+    idx = [i for i, t in enumerate(times) if depart <= t < end]
+    if not idx: return 50.0
+    def sel(k): return [hourly[k][i] for i in idx]
+    avg_prob = stats.mean(sel("precipitation_probability"))
+    avg_mm = stats.mean(sel("precipitation"))
+    avg_w = stats.mean(sel("wind_speed_10m")); avg_g = stats.mean(sel("wind_gusts_10m"))
+    avg_cloud = stats.mean(sel("cloudcover")); avg_temp = stats.mean(sel("temperature_2m"))
+    rain_penalty = clamp(avg_prob * (1 + avg_mm), 0, 100)
+    rain_score = 100 - map_range(rain_penalty, 0, 100, 0, 60)
+    wind_index = avg_w * 0.6 + avg_g * 0.4
+    wind_score = 100 - map_range(wind_index, 0, 50, 0, 50)
+    sun_score = map_range(100 - avg_cloud, 0, 100, 40, 100)
+    cold_pen = map_range(10 - avg_temp, 0, 15, 0, 25) if avg_temp < 10 else 0
+    heat_pen = map_range(avg_temp - 22, 0, 12, 0, 25) if avg_temp > 22 else 0
+    temp_score = 100 - clamp(cold_pen + heat_pen, 0, 40)
+    return clamp(0.5 * rain_score + 0.3 * wind_score + 0.1 * sun_score + 0.1 * temp_score, 0, 100)
 
 def score_location(
     loc: Location,
@@ -269,7 +308,7 @@ def score_location(
     wx_s = score_weather(hourly, depart_dt, duration_h)
 
     precip_list = daily.get("precipitation_sum", [])
-    precip7 = sum(precip_list[-7:]) if len(precip_list) >= 7 else sum(precip_list)
+    # Use yesterday as the endpoint for trail dryness to avoid overreacting to forecast uncertainty
     tr_s = evaluate_trail_dryness(loc.drainage, season, precip_list, end_idx=len(precip_list)-2, window=5)
 
     hk = None; hcoords = None
@@ -309,7 +348,7 @@ def score_location(
         wind_mean = gust_mean = rain_prob = 0.0
 
     reason = assemble_reason(loc, wx_s, tr_s, prox_s, terr_s, sec_s, depart_dt, duration_h,
-                             drive_est, precip7, wind_mean, gust_mean, rain_prob)
+                             drive_est, 0.0, wind_mean, gust_mean, rain_prob)
 
     return {
         "key": loc.key, "name": loc.name, "score": round(total, 1),
@@ -322,7 +361,7 @@ def score_location(
         "notes": reason
     }
 
-# ----- Trail condition history (10 days based on 5-day rain) -----
+# ----- Trail condition history (10 days) -----
 def trail_condition_series(loc: Location, season: str, days: int = 10, window: int = 5) -> List[float]:
     hour_key = dt.datetime.now().strftime("%Y%m%d%H")
     ck = (loc.key + hour_key, days, window, season)
@@ -339,97 +378,41 @@ def trail_condition_series(loc: Location, season: str, days: int = 10, window: i
         _TRAIL_SERIES_CACHE[ck] = (now, res)
         return res
 
-    # We'll compute the last 'days' values ending yesterday (exclude today's final element)
-    upto = len(precip) - 1
+    upto = len(precip) - 1  # exclude "today"
     start = max(window - 1, upto - days)
     series = []
     for end_idx in range(start, upto):
         score = evaluate_trail_dryness(loc.drainage, season, precip, end_idx=end_idx, window=window)
         series.append(round(score, 1))
-
     series = series[-days:]
     _TRAIL_SERIES_CACHE[ck] = (now, series)
     return series
 
+# ----- Outlook today & tomorrow (uses forecast) -----
+def _find_day_index(daily_times: list, target_date: dt.date) -> int:
+    for i, iso in enumerate(daily_times or []):
+        try:
+            d = dt.date.fromisoformat(iso)
+            if d == target_date:
+                return i
+        except Exception:
+            pass
+    return -1
 
-# ----- New weighted + hard-cap trail dryness evaluation -----
-def _drain_factor(drainage: str) -> float:
-    # Well-draining trail-centre/rocky = 1.0; mixed = 1.2; muddy/moor = 1.5
-    if drainage in ("trail_centre", "rocky"):
-        return 1.0
-    if drainage in ("mixed_long_mud", "moor_slow"):
-        return 1.5
-    return 1.2  # "mixed" fallback
-
-def _season_base_days(season: str) -> float:
-    # Days of dry-ish conditions to allow max=100
-    if season == "summer":
-        return 5.0
-    if season == "winter":
-        return 10.0
-    # spring/autumn
-    return 7.5
-
-def _consecutive_dry_days(daily_mm: list, end_idx: int, dry_thresh_mm: float = 1.0, lookback: int = 20) -> int:
-    """Count consecutive dry-ish days ending at end_idx (inclusive). We interpret 'end_idx' as the last *completed* day.
-    daily_mm is ordered oldest -> newest.
-    """
-    cnt = 0
-    i = end_idx
-    while i >= 0 and cnt < lookback:
-        if daily_mm[i] <= dry_thresh_mm:
-            cnt += 1
-            i -= 1
-        else:
-            break
-    return cnt
-
-def evaluate_trail_dryness(drainage: str, season: str, daily_mm: list, end_idx: int, window: int = 5) -> float:
-    """Compute trail dryness score for a specific day using:
-      - Weighted recent rainfall over a rolling window (yesterday most important)
-      - Hard cap: cannot reach 100 until enough consecutive dry-ish days have elapsed,
-        scaled by drainage and season.
-    daily_mm: list of daily precipitation (mm), oldest -> newest; 'end_idx' is the index of the day we are scoring.
-    window: how many days ending at end_idx to include in the weighted rainfall.
-    """
-    if not daily_mm or end_idx < 0:
-        return 50.0
-
-    # Build weights (most recent day among the window has highest weight).
-    # Default weights for window up to 7, we slice as needed; they sum ~1
-    base_weights = [0.40, 0.25, 0.18, 0.11, 0.06, 0.04, 0.02]
-    w = base_weights[:max(1, min(window, len(base_weights)))]
-    w_sum = sum(w)
-    w = [x / w_sum for x in w]
-
-    # Collect the last 'window' days ending at 'end_idx'
-    idx0 = max(0, end_idx - (len(w) - 1))
-    mm_window = daily_mm[idx0:end_idx + 1]
-    if len(mm_window) < 1:
-        return 50.0
-    # Align weights to mm_window length (if near the beginning of the series)
-    w = w[-len(mm_window):]
-
-    weighted_mm = sum(m * ww for m, ww in zip(mm_window[::-1], w))  # map most recent to highest weight
-
-    # Keep the exponential form but with a gentler k per drainage
-    k_map = {"trail_centre": 0.028, "rocky": 0.032, "mixed": 0.040, "mixed_long_mud": 0.050, "moor_slow": 0.060}
-    k = k_map.get(drainage, 0.040)
-
-    base_score = clamp(100.0 * math.exp(-k * weighted_mm), 0.0, 100.0)
-
-    # Hard cap logic: require enough consecutive dry days (<= 1 mm) to unlock 100
-    base_days = _season_base_days(season)
-    factor = _drain_factor(drainage)
-    days_needed = base_days * factor
-
-    # Count consecutive dry days up to 'end_idx'
-    dry_days = _consecutive_dry_days(daily_mm, end_idx, dry_thresh_mm=1.0, lookback=30)
-
-    # Max achievable score increases from 60 toward 100 linearly with dry days, hits 100 at 'days_needed'
-    cap_max = 60.0 + 40.0 * clamp(dry_days / max(1.0, days_needed), 0.0, 1.0)
-
-    return min(base_score, cap_max)
+def trail_condition_outlook(loc: Location, season: str, window: int = 5) -> Dict[str, float]:
+    data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=15, forecast_days=2)
+    daily = data.get("daily", {})
+    precip = daily.get("precipitation_sum", [])
+    times = daily.get("time", [])
+    if not precip or not times:
+        return {"today": 50.0, "tomorrow": 50.0}
+    today = dt.date.today()
+    idx_today = _find_day_index(times, today)
+    idx_tom = _find_day_index(times, today + dt.timedelta(days=1))
+    out = {}
+    out["today"] = round(evaluate_trail_dryness(loc.drainage, season, precip, end_idx=idx_today if idx_today>=0 else len(precip)-2, window=window), 1)
+    out["tomorrow"] = round(evaluate_trail_dryness(loc.drainage, season, precip, end_idx=idx_tom if idx_tom>=0 else len(precip)-1, window=window), 1)
+    return out
 
 def set_home_default_from_cfg(locs: List[Location], cfg: dict):
     home_label = cfg.get("start_location", "Urmston")
@@ -445,7 +428,7 @@ def set_home_default_from_cfg(locs: List[Location], cfg: dict):
 # --- Module-level load for Streamlit ---
 _cfg_module = load_config("config.yaml")
 LOCATIONS: List[Location] = load_locations_from_config(_cfg_module) or []
-DEFAULT_WEIGHTS = get_weights_from_config(_cfg_module)  # <-- make available for import
+DEFAULT_WEIGHTS = get_weights_from_config(_cfg_module)
 set_home_default_from_cfg(LOCATIONS, _cfg_module)
 
 # ----- CLI for local testing -----

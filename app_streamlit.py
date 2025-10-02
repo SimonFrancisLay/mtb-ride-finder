@@ -296,7 +296,7 @@ def render_map_and_results(rows_all, rows_ok, base_drive, curve_pick, label):
                 map_style=None,
                 tooltip=tooltip,
             )
-            st.pydeck_chart(deck, use_container_width=True)
+            st.pydeck_chart(deck, width="stretch")
 
             with st.expander("Legend / colors"):
                 st.markdown(
@@ -359,9 +359,7 @@ with tab_trails:
 
     with sub_out:
         st.subheader("Projected trail conditions (includes today's & tomorrow's rainfall)")
-        # Radio to toggle which day to display on map
         out_day = st.radio("Show projection for:", ["Today", "Tomorrow"], horizontal=True)
-        # Build map data: one point per location, colored by projected trail condition
         outlook_rows = []
         for loc in locs:
             out_scores = trail_condition_outlook(loc, season_val, window=5)
@@ -369,8 +367,6 @@ with tab_trails:
             lat, lon = loc_lookup.get(loc.key, (None, None))
             if lat is None:
                 continue
-            # Color: map 0→red, 50→yellow, 100→green
-            # Simple interpolation
             s = max(0.0, min(100.0, score))
             g = int(255 * (s / 100.0))
             r = int(255 * (1.0 - s / 100.0))
@@ -398,7 +394,6 @@ with tab_trails:
                 get_line_color=[0, 0, 0],
                 line_width_min_pixels=1,
             )
-            # Center around average of shown points
             avg_lat = sum([r["lat"] for r in outlook_rows]) / len(outlook_rows)
             avg_lon = sum([r["lon"] for r in outlook_rows]) / len(outlook_rows)
             deck = pdk.Deck(
