@@ -253,12 +253,12 @@ def score_secondary(hourly: dict, depart: dt.datetime, duration_h: float) -> flo
     secondary = 100 - (cloud_pen + cold_pen + heat_pen)
     return clamp(secondary, 0, 100)
 
-def assemble_reason(loc: Location, wx_s: float, tr_s: float, prox_s: float, terr_s: float, sec_s: float,
+def assemble_reason(loc: Location, total: float, tr_s: float, prox_s: float, terr_s: float, sec_s: float,
                     depart: dt.datetime, duration_h: float, drive_est: int,
                     wind_mean: float, gust_mean: float, rain_prob: float) -> List[str]:
     notes = []
     notes.append(f"Trail score {int(tr_s)}/100 (recent rain lowers score; dry-day streak raises score).")
-    notes.append(f"Wind: {int(wind_mean)} avg (gust {int(gust_mean)}); Weather score {int(wx_s)}.")
+    notes.append(f"Wind: {int(wind_mean)} avg (gust {int(gust_mean)}); Weather score {int(total - tr_s):d}.")
     notes.append(f"Rain probability in window: {int(rain_prob)}%.")
     if drive_est > 0: notes.append(f"Drive: ~{drive_est} min at {depart:%H:%M}. Proximity {int(prox_s)}.")
     else: notes.append("Start from home; no drive needed.")
@@ -306,45 +306,53 @@ def _find_day_index(daily_times: list, target_date: dt.date) -> int:
 
 def _effective_recent_mm(hourly: dict, depart_dt: dt.datetime, lookback_h: int = 24) -> float:
     """Weighted sum of hourly precipitation in the lookback window ending at depart_dt.
-    We apportion the *current* hour by the fraction of the hour that has elapsed so minute-level
-    changes in the Depart time can move the score.
-    Weighting: last 6h ×1.5, 6–12h ×1.0, 12–24h ×0.6."""
+    Minute-level sensitive: apportion partial hours; last 6h ×1.5, 6–12h ×1.0, 12–24h ×0.6."""
     times = [dt.datetime.fromisoformat(t) for t in hourly.get("time", [])]
     vals = hourly.get("precipitation", [])
     if not times or not vals:
         return 0.0
     end = depart_dt
     start = depart_dt - dt.timedelta(hours=lookback_h)
-
     mm = 0.0
     for t, p in zip(times, vals):
-        # Open-Meteo hourly precip at timestamp t usually represents the interval [t, t+1h).
         bucket_start = t
         bucket_end = t + dt.timedelta(hours=1)
-        # Overlap with our window [start, end)
         overlap_start = max(start, bucket_start)
         overlap_end = min(end, bucket_end)
         overlap = (overlap_end - overlap_start).total_seconds() / 3600.0
         if overlap <= 0:
             continue
-        # Fraction of the hour we include
         frac = min(1.0, max(0.0, overlap))
-        # Hours-before used for weighting is measured from the centre of the included portion to end
         centre = overlap_start + (overlap_end - overlap_start) / 2
         hrs_before = (end - centre).total_seconds() / 3600.0
-        if hrs_before <= 6:
-            w = 1.5
-        elif hrs_before <= 12:
-            w = 1.0
-        else:
-            w = 0.6
+        if hrs_before <= 6: w = 1.5
+        elif hrs_before <= 12: w = 1.0
+        else: w = 0.6
         mm += (p or 0.0) * frac * w
     return mm
+
+def trail_score_for(loc: Location, season: str, data: dict, target_date: dt.date, depart_dt: dt.datetime, mode: str = "time_aware", window: int = 5) -> float:
+    """Unified trail scorer used by Top Picks and Outlook.
+       mode: 'time_aware' (24h hourly to depart) or 'daily' (use daily totals only)."""
+    hourly = data.get("hourly", {})
+    daily = data.get("daily", {})
+    precip = list(daily.get("precipitation_sum", []))
+    times = daily.get("time", [])
+    if not precip or not times:
+        return 50.0
+    idx = _find_day_index(times, target_date)
+    if idx < 0:
+        idx = len(precip) - 1  # fallback to last available
+    synth = precip.copy()
+    if mode == "time_aware":
+        eff = _effective_recent_mm(hourly, depart_dt, lookback_h=24)
+        synth[idx] = max(synth[idx] if idx < len(synth) else 0.0, eff)
+    return evaluate_trail_dryness(loc.drainage, season, synth, end_idx=idx, window=window)
 
 # ----- Score a single location -----
 def score_location(
     loc: Location,
-    depart_dt: dt.datetime,
+    when_dt: dt.datetime,           # ride start datetime (today or tomorrow)
     duration_h: float,
     terrain_bias: float,
     max_drive: int,
@@ -353,16 +361,14 @@ def score_location(
     home_key: Optional[str] = None,
     home_coords: Optional[Tuple[float, float]] = None,
     weights: Optional[Dict[str, float]] = None,
+    trail_mode: str = "time_aware", # 'time_aware' or 'daily'
 ):
     data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=15, forecast_days=2)
-    hourly = data["hourly"]; daily = data["daily"]
-    wx_s = score_weather(hourly, depart_dt, duration_h)
+    hourly = data["hourly"]
+    wx_s = score_weather(hourly, when_dt, duration_h)
 
-    precip_list = daily.get("precipitation_sum", [])
-    times = daily.get("time", [])
-    idx_today = _find_day_index(times, dt.date.today())
-    end_idx = idx_today if (isinstance(idx_today, int) and idx_today >= 0) else (len(precip_list) - 1)
-    tr_s = evaluate_trail_dryness(loc.drainage, season, precip_list, end_idx=end_idx, window=5)
+    # Unified trail score for the target ride date
+    tr_s = trail_score_for(loc, season, data, when_dt.date(), when_dt, mode=trail_mode, window=5)
 
     # Drive estimate
     hk = None; hcoords = None
@@ -371,15 +377,15 @@ def score_location(
     elif HOME_COORDS is not None:
         hk, hcoords = (HOME_KEY or "custom"), HOME_COORDS
     if hcoords is not None:
-        drive_est = drive_minutes_from_home(hk, hcoords[0], hcoords[1], loc, depart_dt.hour)
+        drive_est = drive_minutes_from_home(hk, hcoords[0], hcoords[1], loc, when_dt.hour)
     else:
         drive_mid = sum(loc.drive_min_typical) / 2
-        drive_est = int(drive_mid * rush_hour_multiplier(depart_dt.hour))
+        drive_est = int(drive_mid * rush_hour_multiplier(when_dt.hour))
 
     prox_s = score_proximity(drive_est, max_drive)
     tb = TECH_BIAS_OVERRIDE if TECH_BIAS_OVERRIDE is not None else (tech_bias or 0.0)
     terr_s = score_terrain_fit(loc.terrain, terrain_bias, tb, duration_h, loc.duration_range)
-    sec_s = score_secondary(hourly, depart_dt, duration_h)
+    sec_s = score_secondary(hourly, when_dt, duration_h)
 
     use_w = weights or WEIGHT_OVERRIDE
     if not use_w:
@@ -392,8 +398,8 @@ def score_location(
              use_w["terrain_fit"] * terr_s + use_w["secondary"] * sec_s)
 
     times_h = [dt.datetime.fromisoformat(t) for t in hourly["time"]]
-    end = depart_dt + dt.timedelta(hours=duration_h)
-    idx = [i for i, t in enumerate(times_h) if depart_dt <= t < end]
+    end = when_dt + dt.timedelta(hours=duration_h)
+    idx = [i for i, t in enumerate(times_h) if when_dt <= t < end]
     if idx:
         wind_mean = sum(hourly["wind_speed_10m"][i] for i in idx) / len(idx)
         gust_mean = sum(hourly["wind_gusts_10m"][i] for i in idx) / len(idx)
@@ -401,7 +407,7 @@ def score_location(
     else:
         wind_mean = gust_mean = rain_prob = 0.0
 
-    reason = assemble_reason(loc, wx_s, tr_s, prox_s, terr_s, sec_s, depart_dt, duration_h,
+    reason = assemble_reason(loc, total, tr_s, prox_s, terr_s, sec_s, when_dt, duration_h,
                              drive_est, wind_mean, gust_mean, rain_prob)
 
     return {
@@ -411,7 +417,7 @@ def score_location(
             "terrain_fit": round(terr_s, 1), "secondary": round(sec_s, 1)
         },
         "drive_est_min": int(drive_est),
-        "recommend_window": f"{depart_dt:%H:%M}–{(depart_dt + dt.timedelta(hours=duration_h)):%H:%M}",
+        "recommend_window": f"{when_dt:%H:%M}–{(when_dt + dt.timedelta(hours=duration_h)):%H:%M}",
         "notes": reason
     }
 
@@ -442,32 +448,13 @@ def trail_condition_series(loc: Location, season: str, days: int = 10, window: i
     _TRAIL_SERIES_CACHE[ck] = (now, series)
     return series
 
-# ----- Time-aware Outlook (today & tomorrow) -----
-def trail_condition_outlook(loc: Location, season: str, depart_dt: dt.datetime, duration_h: float, window: int = 5) -> Dict[str, float]:
-    """Use hourly precip in the 24 h before the selected depart time to set the 'effective mm' for the day,
-       then run the weighted+hard-cap dryness model. This makes the Outlook map respond to the Depart time."""
+# ----- Outlook (uses the same scorer as Top Picks) -----
+def trail_condition_outlook(loc: Location, season: str, depart_dt: dt.datetime, duration_h: float, mode: str = "time_aware", window: int = 5) -> Dict[str, float]:
     data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=15, forecast_days=2)
-    hourly = data.get("hourly", {})
-    daily = data.get("daily", {})
-    precip = list(daily.get("precipitation_sum", []))
-    times = daily.get("time", [])
-    if not precip or not times:
-        return {"today": 50.0, "tomorrow": 50.0}
-
-    def score_for_day(day_date: dt.date) -> float:
-        idx = _find_day_index(times, day_date)
-        if idx < 0:
-            idx = len(precip) - 1
-        eff = _effective_recent_mm(hourly, dt.datetime.combine(day_date, depart_dt.time()), lookback_h=24)
-        synth = precip.copy()
-        # Don’t understate wetness: use the max of model daily and effective recent wetness
-        synth[idx] = max(synth[idx] if idx < len(synth) else 0.0, eff)
-        return evaluate_trail_dryness(loc.drainage, season, synth, end_idx=idx, window=window)
-
-    return {
-        "today": round(score_for_day(depart_dt.date()), 1),
-        "tomorrow": round(score_for_day((depart_dt + dt.timedelta(days=1)).date()), 1),
-    }
+    today_score = trail_score_for(loc, season, data, depart_dt.date(), depart_dt, mode=mode, window=window)
+    tomorrow_dt = depart_dt + dt.timedelta(days=1)
+    tomorrow_score = trail_score_for(loc, season, data, tomorrow_dt.date(), tomorrow_dt, mode=mode, window=window)
+    return {"today": round(today_score, 1), "tomorrow": round(tomorrow_score, 1)}
 
 def set_home_default_from_cfg(locs: List[Location], cfg: dict):
     home_label = cfg.get("start_location", "Urmston")
@@ -495,6 +482,7 @@ def main():
     parser.add_argument("--max-drive", type=int, default=90)
     parser.add_argument("--terrain-bias", type=float, default=0.0)
     parser.add_argument("--tech-bias", type=float, default=0.0)
+    parser.add_argument("--trail-mode", type=str, default="time_aware", choices=["time_aware", "daily"])
     args = parser.parse_args()
 
     if args.home:
@@ -503,9 +491,12 @@ def main():
     hh, mm = parse_time_str(args.depart)
     depart_dt = dt.datetime.combine(dt.date.today(), dt.time(hh, mm))
 
-    for loc in LOCATIONS:
-        r = score_location(loc, depart_dt, args.duration, args.terrain_bias, args.max_drive, season_from_date(dt.date.today()), tech_bias=args.tech_bias)
-        print(loc.name, r["score"], r["components"], r["drive_est_min"])
+    for offset in (0, 1):
+        when = depart_dt + dt.timedelta(days=offset)
+        for loc in LOCATIONS:
+            r = score_location(loc, when, args.duration, args.terrain_bias, args.max_drive, season_from_date(when.date()),
+                               tech_bias=args.tech_bias, trail_mode=args.trail_mode)
+            print(("Tomorrow" if offset else "Today"), loc.name, r["score"], r["components"], r["drive_est_min"])
 
 if __name__ == "__main__":
     main()

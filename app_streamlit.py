@@ -72,8 +72,8 @@ with st.sidebar:
 
     st.caption("⚡ Weather and drive estimates update at most once per hour (cached). Change 'Home' to plan trips (e.g., Lakes or 7stanes).")
 
-    # ---- Advanced scoring weights (hidden by default) ----
-    with st.expander("Advanced scoring weights", expanded=False):
+    # ---- Advanced scoring & options (hidden by default) ----
+    with st.expander("Advanced scoring & options", expanded=False):
         use_defaults = st.checkbox("Use default weights from config", value=True)
         if use_defaults:
             weights = DEFAULT_WEIGHTS.copy()
@@ -93,6 +93,16 @@ with st.sidebar:
                 "secondary": w_sec/total,
             }
 
+        st.markdown("---")
+        trail_mode = st.radio(
+            "Trail scoring mode (affects Top Picks & Outlook)",
+            ["Time-aware (24 h up to start time)", "Daily aggregate"],
+            index=0,
+            help=("Time-aware uses hourly rain in the last 24 h before your chosen start time; "
+                  "Daily aggregate uses day-level totals. History table always shows daily aggregates.")
+        )
+        trail_mode_key = "time_aware" if trail_mode.startswith("Time-aware") else "daily"
+
 # Apply settings / overrides
 depart_dt = dt.datetime.combine(today, depart)
 season_val = season_from_date(today) if season == "auto" else season
@@ -105,11 +115,12 @@ set_weight_override(weights if not use_defaults else None)
 locs = [l for l in LOCATIONS if (not include_keys or l.key in include_keys) and (l.key not in exclude_keys)]
 
 # ---------------- Scoring helpers ----------------
-def score_all(locs, when_dt, weights_use):
+def score_all(locs, when_dt, weights_use, trail_mode_key):
     rows = []
     for loc in locs:
         try:
-            r = score_location(loc, when_dt, duration, terrain_bias, max_drive, season_val, tech_bias=tech_bias, weights=weights_use)
+            r = score_location(loc, when_dt, duration, terrain_bias, max_drive, season_from_date(when_dt.date()), 
+                               tech_bias=tech_bias, weights=weights_use, trail_mode=trail_mode_key)
         except Exception as e:
             r = {
                 "key": loc.key, "name": loc.name, "score": 0.0,
@@ -121,8 +132,8 @@ def score_all(locs, when_dt, weights_use):
         rows.append(r)
     return sorted(rows, key=lambda x: x["score"], reverse=True)
 
-rows_today_all = score_all(locs, depart_dt, weights)
-rows_tom_all = score_all(locs, depart_dt + dt.timedelta(days=1), weights)
+rows_today_all = score_all(locs, depart_dt, weights, trail_mode_key)
+rows_tom_all = score_all(locs, depart_dt + dt.timedelta(days=1), weights, trail_mode_key)
 
 def in_cap(rows): return [r for r in rows if r.get("drive_est_min", 9999) <= max_drive]
 rows_today_ok = in_cap(rows_today_all)
@@ -362,7 +373,7 @@ with tab_trails:
         out_day = st.radio("Show projection for:", ["Today", "Tomorrow"], horizontal=True)
         outlook_rows = []
         for loc in locs:
-            out_scores = trail_condition_outlook(loc, season_val, depart_dt, duration, window=5)
+            out_scores = trail_condition_outlook(loc, season_val, depart_dt, duration, mode=trail_mode_key, window=5)
             score = out_scores["today"] if out_day == "Today" else out_scores["tomorrow"]
             lat, lon = loc_lookup.get(loc.key, (None, None))
             if lat is None:
@@ -404,6 +415,6 @@ with tab_trails:
                          "style": {"backgroundColor": "rgba(30,30,30,0.9)", "color": "white"}},
             )
             st.pydeck_chart(deck, use_container_width=True)
-            st.caption("Projection uses weighted recent rainfall + drainage/season hard cap, and hourly rain in the last 24 h before your selected depart time.")
+            st.caption("Projection uses the same trail-scoring mode as Top Picks (set in Advanced → Trail scoring mode).")
         else:
             st.info("No locations available to display.")
