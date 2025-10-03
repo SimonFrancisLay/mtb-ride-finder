@@ -293,7 +293,7 @@ def score_weather(hourly: dict, depart: dt.datetime, duration_h: float) -> float
     temp_score = 100 - clamp(cold_pen + heat_pen, 0, 40)
     return clamp(0.5 * rain_score + 0.3 * wind_score + 0.1 * sun_score + 0.1 * temp_score, 0, 100)
 
-# Helpers for daily indexing
+# Helpers for daily indexing and time-aware wetness
 def _find_day_index(daily_times: list, target_date: dt.date) -> int:
     for i, iso in enumerate(daily_times or []):
         try:
@@ -303,6 +303,27 @@ def _find_day_index(daily_times: list, target_date: dt.date) -> int:
         except Exception:
             pass
     return -1
+
+def _effective_recent_mm(hourly: dict, depart_dt: dt.datetime, lookback_h: int = 24) -> float:
+    """Weighted sum of hourly precipitation in the 24h before depart_dt.
+       Last 6h weight 1.5, 6–12h weight 1.0, 12–24h weight 0.6."""
+    times = [dt.datetime.fromisoformat(t) for t in hourly.get("time", [])]
+    if not times:
+        return 0.0
+    end = depart_dt
+    start = depart_dt - dt.timedelta(hours=lookback_h)
+    mm = 0.0
+    for t, p in zip(times, hourly.get("precipitation", [])):
+        if start <= t < end:
+            hrs_before = (end - t).total_seconds() / 3600.0
+            if hrs_before <= 6:
+                w = 1.5
+            elif hrs_before <= 12:
+                w = 1.0
+            else:
+                w = 0.6
+            mm += (p or 0.0) * w
+    return mm
 
 # ----- Score a single location -----
 def score_location(
@@ -405,20 +426,32 @@ def trail_condition_series(loc: Location, season: str, days: int = 10, window: i
     _TRAIL_SERIES_CACHE[ck] = (now, series)
     return series
 
-# ----- Outlook today & tomorrow (uses forecast) -----
-def trail_condition_outlook(loc: Location, season: str, window: int = 5) -> Dict[str, float]:
+# ----- Time-aware Outlook (today & tomorrow) -----
+def trail_condition_outlook(loc: Location, season: str, depart_dt: dt.datetime, duration_h: float, window: int = 5) -> Dict[str, float]:
+    """Use hourly precip in the 24 h before the selected depart time to set the 'effective mm' for the day,
+       then run the weighted+hard-cap dryness model. This makes the Outlook map respond to the Depart time."""
     data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=15, forecast_days=2)
+    hourly = data.get("hourly", {})
     daily = data.get("daily", {})
-    precip = daily.get("precipitation_sum", [])
+    precip = list(daily.get("precipitation_sum", []))
     times = daily.get("time", [])
     if not precip or not times:
         return {"today": 50.0, "tomorrow": 50.0}
-    idx_today = _find_day_index(times, dt.date.today())
-    idx_tom = _find_day_index(times, dt.date.today() + dt.timedelta(days=1))
-    out = {}
-    out["today"] = round(evaluate_trail_dryness(loc.drainage, season, precip, end_idx=idx_today if idx_today>=0 else len(precip)-2, window=window), 1)
-    out["tomorrow"] = round(evaluate_trail_dryness(loc.drainage, season, precip, end_idx=idx_tom if idx_tom>=0 else len(precip)-1, window=window), 1)
-    return out
+
+    def score_for_day(day_date: dt.date) -> float:
+        idx = _find_day_index(times, day_date)
+        if idx < 0:
+            idx = len(precip) - 1
+        eff = _effective_recent_mm(hourly, dt.datetime.combine(day_date, depart_dt.time()), lookback_h=24)
+        synth = precip.copy()
+        # Don’t understate wetness: use the max of model daily and effective recent wetness
+        synth[idx] = max(synth[idx] if idx < len(synth) else 0.0, eff)
+        return evaluate_trail_dryness(loc.drainage, season, synth, end_idx=idx, window=window)
+
+    return {
+        "today": round(score_for_day(depart_dt.date()), 1),
+        "tomorrow": round(score_for_day((depart_dt + dt.timedelta(days=1)).date()), 1),
+    }
 
 def set_home_default_from_cfg(locs: List[Location], cfg: dict):
     home_label = cfg.get("start_location", "Urmston")

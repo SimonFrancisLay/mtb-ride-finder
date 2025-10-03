@@ -38,7 +38,7 @@ default_depart = dt.time(8, 0)
 with st.sidebar:
     st.header("Daily knobs")
 
-    # Home / Start location: always include all locations from config
+    # Home / Start location
     all_keys = [l.key for l in LOCATIONS]
     default_home_idx = all_keys.index("urmston") if "urmston" in all_keys else 0
     home_key = st.selectbox(
@@ -70,7 +70,7 @@ with st.sidebar:
         help="If Terrain & Trail are both strong, don't overly penalize distance."
     )
 
-    st.caption("⚡ Weather and drive estimates update at most once per hour (cached in the backend). Change 'Home' to plan trips (e.g., Lakes or 7stanes).")
+    st.caption("⚡ Weather and drive estimates update at most once per hour (cached). Change 'Home' to plan trips (e.g., Lakes or 7stanes).")
 
     # ---- Advanced scoring weights (hidden by default) ----
     with st.expander("Advanced scoring weights", expanded=False):
@@ -358,11 +358,11 @@ with tab_trails:
         st.caption("Each cell is a trail condition score (0–100) for that day, computed from the preceding 5-day rainfall at that location.")
 
     with sub_out:
-        st.subheader("Projected trail conditions (includes today's & tomorrow's rainfall)")
+        st.subheader("Projected trail conditions (includes hourly rain up to your depart time)")
         out_day = st.radio("Show projection for:", ["Today", "Tomorrow"], horizontal=True)
         outlook_rows = []
         for loc in locs:
-            out_scores = trail_condition_outlook(loc, season_val, window=5)
+            out_scores = trail_condition_outlook(loc, season_val, depart_dt, duration, window=5)
             score = out_scores["today"] if out_day == "Today" else out_scores["tomorrow"]
             lat, lon = loc_lookup.get(loc.key, (None, None))
             if lat is None:
@@ -404,6 +404,6 @@ with tab_trails:
                          "style": {"backgroundColor": "rgba(30,30,30,0.9)", "color": "white"}},
             )
             st.pydeck_chart(deck, use_container_width=True)
-            st.caption("Projection uses weighted recent rainfall and a drainage/season-based hard cap. Includes today's & tomorrow's forecast rainfall.")
+            st.caption("Projection uses weighted recent rainfall + drainage/season hard cap, and hourly rain in the last 24 h before your selected depart time.")
         else:
             st.info("No locations available to display.")
