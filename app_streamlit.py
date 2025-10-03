@@ -338,7 +338,7 @@ with tab_trails:
     sub_hist, sub_out = st.tabs(["History (last 10 days)", "Outlook (today & tomorrow)"])
 
     with sub_hist:
-        st.subheader("Trail conditions — last 10 days (higher = drier)")
+        st.subheader("Trail conditions — last 10 days (higher = drier)  ·  (daily aggregates)")
         days = 10; window = 5
         season_tc = season_val
         data_hist = {}
@@ -358,7 +358,7 @@ with tab_trails:
         st.caption("Each cell is a trail condition score (0–100) for that day, computed from the preceding 5-day rainfall at that location.")
 
     with sub_out:
-        st.subheader("Projected trail conditions (includes hourly rain up to your depart time)")
+        st.subheader("Projected trail conditions — reflects selected start time (uses hourly rain up to that time)")
         out_day = st.radio("Show projection for:", ["Today", "Tomorrow"], horizontal=True)
         outlook_rows = []
         for loc in locs:

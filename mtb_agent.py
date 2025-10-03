@@ -305,24 +305,40 @@ def _find_day_index(daily_times: list, target_date: dt.date) -> int:
     return -1
 
 def _effective_recent_mm(hourly: dict, depart_dt: dt.datetime, lookback_h: int = 24) -> float:
-    """Weighted sum of hourly precipitation in the 24h before depart_dt.
-       Last 6h weight 1.5, 6–12h weight 1.0, 12–24h weight 0.6."""
+    """Weighted sum of hourly precipitation in the lookback window ending at depart_dt.
+    We apportion the *current* hour by the fraction of the hour that has elapsed so minute-level
+    changes in the Depart time can move the score.
+    Weighting: last 6h ×1.5, 6–12h ×1.0, 12–24h ×0.6."""
     times = [dt.datetime.fromisoformat(t) for t in hourly.get("time", [])]
-    if not times:
+    vals = hourly.get("precipitation", [])
+    if not times or not vals:
         return 0.0
     end = depart_dt
     start = depart_dt - dt.timedelta(hours=lookback_h)
+
     mm = 0.0
-    for t, p in zip(times, hourly.get("precipitation", [])):
-        if start <= t < end:
-            hrs_before = (end - t).total_seconds() / 3600.0
-            if hrs_before <= 6:
-                w = 1.5
-            elif hrs_before <= 12:
-                w = 1.0
-            else:
-                w = 0.6
-            mm += (p or 0.0) * w
+    for t, p in zip(times, vals):
+        # Open-Meteo hourly precip at timestamp t usually represents the interval [t, t+1h).
+        bucket_start = t
+        bucket_end = t + dt.timedelta(hours=1)
+        # Overlap with our window [start, end)
+        overlap_start = max(start, bucket_start)
+        overlap_end = min(end, bucket_end)
+        overlap = (overlap_end - overlap_start).total_seconds() / 3600.0
+        if overlap <= 0:
+            continue
+        # Fraction of the hour we include
+        frac = min(1.0, max(0.0, overlap))
+        # Hours-before used for weighting is measured from the centre of the included portion to end
+        centre = overlap_start + (overlap_end - overlap_start) / 2
+        hrs_before = (end - centre).total_seconds() / 3600.0
+        if hrs_before <= 6:
+            w = 1.5
+        elif hrs_before <= 12:
+            w = 1.0
+        else:
+            w = 0.6
+        mm += (p or 0.0) * frac * w
     return mm
 
 # ----- Score a single location -----
