@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+Core engine for MTB Ride Finder with a date selector (0–14 days).
+- Unified trail scoring used by Top Picks and Outlook.
+- Time-aware mode for Today/Tomorrow; daily aggregates for later dates.
+- Hourly caching for weather, drive estimates, and trail series.
+"""
 import argparse
 import math
 import requests
@@ -137,7 +143,7 @@ def _consecutive_dry_days(daily_mm: list, end_idx: int, dry_thresh_mm: float = 1
 
 def evaluate_trail_dryness(drainage: str, season: str, daily_mm: list, end_idx: int, window: int = 5) -> float:
     """Returns 0..100 where higher = drier. Uses weighted recent rain -> exponential decay,
-    then applies a SOFT damping based on dry-day streak (no hard 60-cap)."""
+    then applies a SOFT damping based on dry-day streak (no hard caps)."""
     if not daily_mm or end_idx < 0:
         return 50.0
     base_weights = [0.40, 0.25, 0.18, 0.11, 0.06, 0.04, 0.02]
@@ -149,7 +155,6 @@ def evaluate_trail_dryness(drainage: str, season: str, daily_mm: list, end_idx: 
         return 50.0
     w = w[-len(mm_window):]
     weighted_mm = sum(m * ww for m, ww in zip(mm_window[::-1], w))  # most recent gets highest weight
-    # Slightly tweaked decay constants to add separation after modest rain:
     k_map = {"trail_centre": 0.030, "rocky": 0.033, "mixed": 0.042, "mixed_long_mud": 0.052, "moor_slow": 0.062}
     k = k_map.get(drainage, 0.042)
     base_score = clamp(100.0 * math.exp(-k * weighted_mm), 0.0, 100.0)
@@ -311,7 +316,7 @@ def _find_day_index(daily_times: list, target_date: dt.date) -> int:
 
 def _effective_recent_mm(hourly: dict, depart_dt: dt.datetime, lookback_h: int = 24) -> float:
     """Weighted sum of hourly precipitation in the lookback window ending at depart_dt.
-    Minute-level sensitive: apportion partial hours; last 6h ×1.5, 6–12h ×1.0, 12–24h ×0.6."""
+    Last 6h ×1.5, 6–12h ×1.0, 12–24h ×0.6 (partial hours accounted for)."""
     times = [dt.datetime.fromisoformat(t) for t in hourly.get("time", [])]
     vals = hourly.get("precipitation", [])
     if not times or not vals:
@@ -355,10 +360,14 @@ def trail_score_for(loc: Location, season: str, data: dict, target_date: dt.date
         synth[idx] = base + 0.6 * eff  # blend-in recent hours (not max-replace)
     return evaluate_trail_dryness(loc.drainage, season, synth, end_idx=idx, window=window)
 
+def trail_condition_for_date(loc: Location, season: str, target_dt: dt.datetime, mode: str) -> float:
+    data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=15, forecast_days=2)
+    return trail_score_for(loc, season, data, target_dt.date(), target_dt, mode=mode, window=5)
+
 # ----- Score a single location -----
 def score_location(
     loc: Location,
-    when_dt: dt.datetime,           # ride start datetime (today or tomorrow)
+    when_dt: dt.datetime,           # ride start datetime (any date)
     duration_h: float,
     terrain_bias: float,
     max_drive: int,
@@ -454,22 +463,14 @@ def trail_condition_series(loc: Location, season: str, days: int = 10, window: i
     _TRAIL_SERIES_CACHE[ck] = (now, series)
     return series
 
-# ----- Outlook (uses the same scorer as Top Picks) -----
-def trail_condition_outlook(loc: Location, season: str, depart_dt: dt.datetime, duration_h: float, mode: str = "time_aware", window: int = 5) -> Dict[str, float]:
-    data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=15, forecast_days=2)
-    today_score = trail_score_for(loc, season, data, depart_dt.date(), depart_dt, mode=mode, window=window)
-    tomorrow_dt = depart_dt + dt.timedelta(days=1)
-    tomorrow_score = trail_score_for(loc, season, data, tomorrow_dt.date(), tomorrow_dt, mode=mode, window=window)
-    return {"today": round(today_score, 1), "tomorrow": round(tomorrow_score, 1)}
+# ----- Outlook helpers for arbitrary date -----
+def trail_condition_for_date_outlook(loc: Location, season: str, target_dt: dt.datetime, mode: str) -> float:
+    return trail_condition_for_date(loc, season, target_dt, mode=mode)
 
 def set_home_default_from_cfg(locs: List[Location], cfg: dict):
-    home_label = cfg.get("start_location", "Urmston")
     for l in locs:
         if l.key == "urmston":
             set_home_by_key("urmston", locs); return
-    for l in locs:
-        if home_label.lower() in l.name.lower():
-            set_home_by_key(l.key, locs); return
     if locs:
         set_home_by_key(locs[0].key, locs)
 
@@ -486,23 +487,23 @@ def main():
     parser.add_argument("--depart", type=str, default="08:00")
     parser.add_argument("--duration", type=float, default=2.5)
     parser.add_argument("--max-drive", type=int, default=90)
+    parser.add_argument("--days-ahead", type=int, default=0)
     parser.add_argument("--terrain-bias", type=float, default=0.0)
     parser.add_argument("--tech-bias", type=float, default=0.0)
-    parser.add_argument("--trail-mode", type=str, default="time_aware", choices=["time_aware", "daily"])
     args = parser.parse_args()
 
     if args.home:
         set_home_by_key(args.home, LOCATIONS)
 
     hh, mm = parse_time_str(args.depart)
-    depart_dt = dt.datetime.combine(dt.date.today(), dt.time(hh, mm))
+    base = dt.datetime.combine(dt.date.today(), dt.time(hh, mm))
+    when = base + dt.timedelta(days=args.days_ahead)
+    mode = "time_aware" if args.days_ahead <= 1 else "daily"
 
-    for offset in (0, 1):
-        when = depart_dt + dt.timedelta(days=offset)
-        for loc in LOCATIONS:
-            r = score_location(loc, when, args.duration, args.terrain_bias, args.max_drive, season_from_date(when.date()),
-                               tech_bias=args.tech_bias, trail_mode=args.trail_mode)
-            print(("Tomorrow" if offset else "Today"), loc.name, r["score"], r["components"], r["drive_est_min"])
+    for loc in LOCATIONS:
+        r = score_location(loc, when, args.duration, args.terrain_bias, args.max_drive, season_from_date(when.date()),
+                           tech_bias=args.tech_bias, trail_mode=mode)
+        print(when.date(), loc.name, r["score"], r["components"], r["drive_est_min"])
 
 if __name__ == "__main__":
     main()

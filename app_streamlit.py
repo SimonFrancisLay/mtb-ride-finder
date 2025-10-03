@@ -20,7 +20,7 @@ from mtb_agent import (
     set_home_by_key,
     set_weight_override,
     trail_condition_series,
-    trail_condition_outlook,
+    trail_condition_for_date_outlook,
 )
 
 st.set_page_config(page_title="MTB Ride Options — Manchester", layout="wide")
@@ -31,8 +31,13 @@ terrain_map = {l.key: set(t.strip() for t in l.terrain.split(",")) for l in LOCA
 loc_lookup = {l.key: (l.lat, l.lon) for l in LOCATIONS}
 
 st.title("MTB Ride Options — Manchester")
-today = dt.datetime.now().date()
+today = dt.date.today()
 default_depart = dt.time(8, 0)
+
+def fmt_date(d: dt.date):
+    if d == today: return "Today"
+    if d == today + dt.timedelta(days=1): return "Tomorrow"
+    return d.strftime("%a %d %b")
 
 # ---------------- Sidebar controls ----------------
 with st.sidebar:
@@ -46,10 +51,14 @@ with st.sidebar:
         all_keys,
         index=default_home_idx,
         format_func=lambda k: key_to_name.get(k, k),
-        help="Choose your base for today. Drive times are measured from here."
+        help="Choose your base. Drive times are measured from here."
     )
 
     depart = st.time_input("Depart time", value=default_depart)
+
+    # Ride date selector (0..14 days)
+    options = [today + dt.timedelta(days=i) for i in range(0, 15)]
+    ride_date = st.selectbox("Ride date", options=options, index=0, format_func=fmt_date)
 
     # Day-to-day cap; curve ball may extend beyond via the +60 rule
     max_drive = st.slider("Max drive (min)", 30, 120, 90, 5)
@@ -94,18 +103,13 @@ with st.sidebar:
             }
 
         st.markdown("---")
-        trail_mode = st.radio(
-            "Trail scoring mode (affects Top Picks & Outlook)",
-            ["Time-aware (24 h up to start time)", "Daily aggregate"],
-            index=0,
-            help=("Time-aware uses hourly rain in the last 24 h before your chosen start time; "
-                  "Daily aggregate uses day-level totals. History table always shows daily aggregates.")
-        )
-        trail_mode_key = "time_aware" if trail_mode.startswith("Time-aware") else "daily"
+        st.caption("Trail conditions are time-aware for Today/Tomorrow, and daily aggregates for later dates.")
 
 # Apply settings / overrides
-depart_dt = dt.datetime.combine(today, depart)
-season_val = season_from_date(today) if season == "auto" else season
+depart_dt = dt.datetime.combine(ride_date, depart)
+days_ahead = (ride_date - today).days
+trail_mode_eff = "time_aware" if days_ahead <= 1 else "daily"
+season_val = season_from_date(ride_date) if season == "auto" else season
 set_home_by_key(home_key, LOCATIONS)
 set_tech_bias_override(tech_bias)
 set_prox_override(prox_override)
@@ -132,20 +136,15 @@ def score_all(locs, when_dt, weights_use, trail_mode_key):
         rows.append(r)
     return sorted(rows, key=lambda x: x["score"], reverse=True)
 
-rows_today_all = score_all(locs, depart_dt, weights, trail_mode_key)
-rows_tom_all = score_all(locs, depart_dt + dt.timedelta(days=1), weights, trail_mode_key)
-
-def in_cap(rows): return [r for r in rows if r.get("drive_est_min", 9999) <= max_drive]
-rows_today_ok = in_cap(rows_today_all)
-rows_tom_ok = in_cap(rows_tom_all)
+rows_all = score_all(locs, depart_dt, weights, trail_mode_eff)
+rows_ok = [r for r in rows_all if r.get("drive_est_min", 9999) <= max_drive]
 
 def baseline_drive(filtered, allrows):
     if filtered: return filtered[0]['drive_est_min']
     if allrows: return allrows[0]['drive_est_min']
     return max_drive
 
-base_today_drive = baseline_drive(rows_today_ok, rows_today_all)
-base_tom_drive   = baseline_drive(rows_tom_ok, rows_tom_all)
+base_drive = baseline_drive(rows_ok, rows_all)
 curve_extra_limit = 60  # minutes
 
 def pick_curve_ball(rows_all, rows_filtered, bias, tech_bias, baseline_drive_min: int, limit_extra_min: int):
@@ -167,8 +166,7 @@ def pick_curve_ball(rows_all, rows_filtered, bias, tech_bias, baseline_drive_min
             if val > best_val: best, best_val = r, val
     return best or (max(rest, key=lambda x: x["components"]["weather"]) if rest else None)
 
-curve_today = pick_curve_ball(rows_today_all, rows_today_ok, terrain_bias, tech_bias, base_today_drive, curve_extra_limit) if offer_curve_ball else None
-curve_tom   = pick_curve_ball(rows_tom_all,   rows_tom_ok,   terrain_bias, tech_bias, base_tom_drive,   curve_extra_limit) if offer_curve_ball else None
+curve_pick = pick_curve_ball(rows_all, rows_ok, terrain_bias, tech_bias, base_drive, curve_extra_limit) if offer_curve_ball else None
 
 # ---------------- Map helpers ----------------
 def build_features(rows, exclude_key=None):
@@ -230,173 +228,35 @@ def triangle_coords(lat, lon, size_m=5000):
         coords.append([lon + dlon, lat + dlat])
     coords.append(coords[0]); return [coords]
 
-# --------------- Unified Tabs: Today / Tomorrow / Trail conditions ---------------
-tab_today, tab_tomorrow, tab_trails = st.tabs(["Today", "Tomorrow", "Trail conditions"])
+# ---------------- Map & Results (single date) ----------------
+st.subheader(f"Top picks for {fmt_date(ride_date)}")
 
-def render_map_and_results(rows_all, rows_ok, base_drive, curve_pick, label):
-    # Map first
-    if not HAVE_PYDECK:
-        st.warning("""pydeck is not installed, so the map is hidden. Install with:
+# Map first
+if not HAVE_PYDECK:
+    st.warning("""pydeck is not installed, so the map is hidden. Install with:
 `python -m pip install pydeck`""")
-    else:
-        exclude_key = curve_pick["key"] if curve_pick else None
-        features = build_features(rows_ok, exclude_key=exclude_key)
-        out_rows_for_map = [r for r in rows_all if r.get("drive_est_min", 9999) > max_drive]
+else:
+    exclude_key = curve_pick["key"] if curve_pick else None
+    features = build_features(rows_ok, exclude_key=exclude_key)
+    out_rows_for_map = [r for r in rows_all if r.get("drive_est_min", 9999) > max_drive]
 
-        if features or curve_pick or out_rows_for_map:
-            # Center on top-3 in-range + curve-ball
-            top3 = sorted(features, key=lambda x: x.get("rank", 99))[:3] if features else []
-            if curve_pick:
-                clat, clon = loc_lookup.get(curve_pick["key"], (None, None))
-            else:
-                clat = clon = None
-            cen_lats = [f["lat"] for f in top3]; cen_lons = [f["lon"] for f in top3]
-            if clat is not None: cen_lats.append(clat); cen_lons.append(clon)
-            avg_lat = sum(cen_lats)/len(cen_lats) if cen_lats else 53.48
-            avg_lon = sum(cen_lons)/len(cen_lons) if cen_lons else -2.3
-
-            layers = []
-            if features:
-                layers.append(pdk.Layer(
-                    "ScatterplotLayer",
-                    data=features,
-                    get_position='[lon, lat]',
-                    get_radius="radius",
-                    get_fill_color="color",
-                    pickable=True,
-                    stroked=True,
-                    get_line_color=[0, 0, 0],
-                    line_width_min_pixels=1,
-                ))
-            if out_rows_for_map:
-                out_feats = build_features_out_of_range(out_rows_for_map, exclude_key=exclude_key)
-                layers.append(pdk.Layer(
-                    "ScatterplotLayer",
-                    data=out_feats,
-                    get_position='[lon, lat]',
-                    get_radius="radius",
-                    filled=False,
-                    stroked=True,
-                    get_line_color=[128, 0, 128],
-                    line_width_min_pixels=2,
-                    pickable=True,
-                ))
-            if curve_pick is not None:
-                clat, clon = loc_lookup.get(curve_pick["key"], (None, None))
-                if clat is not None:
-                    tri = triangle_coords(clat, clon, size_m=5000)
-                    layers.append(pdk.Layer(
-                        "PolygonLayer",
-                        data=[{"polygon": tri, "name": curve_pick["name"]}],
-                        get_polygon="polygon",
-                        get_fill_color=[255, 100, 0, 220],
-                        get_line_color=[0, 0, 0, 255],
-                        line_width_min_pixels=2,
-                        pickable=True,
-                    ))
-
-            tooltip = {
-                "html": ("<b>#{rank} {name}</b><br/>Score: <b>{score}</b><br/>"
-                         "Window: {window}<br/>Drive: ~{drive} min<br/><hr style='margin:4px 0'/>"
-                         "Weather: {weather}<br/>Trail: {trail}<br/>Terrain fit: {terrain_fit}<br/>Proximity: {proximity}<br/>Secondary: {secondary}"),
-                "style": {"backgroundColor": "rgba(30,30,30,0.9)", "color": "white"}
-            }
-            deck = pdk.Deck(
-                layers=layers,
-                initial_view_state=pdk.ViewState(latitude=avg_lat, longitude=avg_lon, zoom=7, pitch=0),
-                map_style=None,
-                tooltip=tooltip,
-            )
-            st.pydeck_chart(deck, use_container_width=True)
-
-            with st.expander("Legend / colors"):
-                st.markdown(
-                    "- **#1** green • **#2** yellow • **#3** blue • **#4+** purple\n"
-                    "- **Orange triangle** = curve ball (≤ +60 min beyond the #1 filtered drive)\n"
-                    "- **Hollow purple circle** = outside current Max drive (not considered in main ranking)"
-                )
+    if features or curve_pick or out_rows_for_map:
+        # Center on top-3 in-range + curve-ball
+        top3 = sorted(features, key=lambda x: x.get("rank", 99))[:3] if features else []
+        if curve_pick:
+            clat, clon = loc_lookup.get(curve_pick["key"], (None, None))
         else:
-            st.info("No locations to display with current filters.")
+            clat = clon = None
+        cen_lats = [f["lat"] for f in top3]; cen_lons = [f["lon"] for f in top3]
+        if clat is not None: cen_lats.append(clat); cen_lons.append(clon)
+        avg_lat = sum(cen_lats)/len(cen_lats) if cen_lats else 53.48
+        avg_lon = sum(cen_lons)/len(cen_lons) if cen_lons else -2.3
 
-    # Results under the map
-    st.subheader(f"Top picks — {label}")
-    for i, r in enumerate(rows_ok[:5], start=1):
-        with st.container(border=True):
-            st.markdown(f"### {i}) {r['name']} — **{r['score']}**")
-            comps = r["components"]
-            c = st.columns(5)
-            c[0].metric("Weather", comps["weather"])
-            c[1].metric("Trail", comps["trail"])
-            c[2].metric("Proximity", comps["proximity"])
-            c[3].metric("Terrain fit", comps["terrain_fit"])
-            c[4].metric("Secondary", comps["secondary"])
-            st.write(f"**Window:** {r['recommend_window']} | **Drive:** ~{r['drive_est_min']} min")
-            for n in r["notes"]:
-                st.write(f"- {n}")
-
-    st.subheader(f"Alternates — {label}")
-    for r in rows_ok[5:7]:
-        st.write(f"- {r['name']} — {r['score']}")
-
-with tab_today:
-    render_map_and_results(rows_today_all, rows_today_ok, base_today_drive, curve_today, "Today")
-
-with tab_tomorrow:
-    render_map_and_results(rows_tom_all, rows_tom_ok, base_tom_drive, curve_tom, "Tomorrow")
-
-# ---- Trail conditions tab ----
-with tab_trails:
-    sub_hist, sub_out = st.tabs(["History (last 10 days)", "Outlook (today & tomorrow)"])
-
-    with sub_hist:
-        st.subheader("Trail conditions — last 10 days (higher = drier)  ·  (daily aggregates)")
-        days = 10; window = 5
-        season_tc = season_val
-        data_hist = {}
-        for loc in locs:
-            series = trail_condition_series(loc, season_tc, days=days, window=window)
-            data_hist[key_to_name[loc.key]] = series
-        today_dt = dt.date.today()
-        dates = [(today_dt - dt.timedelta(days=(days - i))) for i in range(1, days+1)]
-        df = pd.DataFrame(data_hist, index=[d.strftime("%d %b") for d in dates]).T
-        try:
-            import matplotlib  # ensure availability for Styler gradients
-            styled = df.style.background_gradient(cmap="Greens", axis=1)
-            st.dataframe(styled, use_container_width=True)
-        except Exception:
-            st.warning("Matplotlib not available — showing table without heatmap shading.")
-            st.dataframe(df, use_container_width=True)
-        st.caption("Each cell is a trail condition score (0–100) for that day, computed from the preceding 5-day rainfall at that location.")
-
-    with sub_out:
-        st.subheader("Projected trail conditions — reflects selected start time (uses hourly rain up to that time)")
-        out_day = st.radio("Show projection for:", ["Today", "Tomorrow"], horizontal=True)
-        outlook_rows = []
-        for loc in locs:
-            out_scores = trail_condition_outlook(loc, season_val, depart_dt, duration, mode=trail_mode_key, window=5)
-            score = out_scores["today"] if out_day == "Today" else out_scores["tomorrow"]
-            lat, lon = loc_lookup.get(loc.key, (None, None))
-            if lat is None:
-                continue
-            s = max(0.0, min(100.0, score))
-            g = int(255 * (s / 100.0))
-            r = int(255 * (1.0 - s / 100.0))
-            b = 0
-            outlook_rows.append({
-                "name": key_to_name[loc.key],
-                "lat": lat, "lon": lon,
-                "score": round(score, 1),
-                "color": [r, g, b, 220],
-                "radius": 1000 + 30 * s,
-            })
-
-        if not HAVE_PYDECK:
-            st.warning("""pydeck is not installed, so the map is hidden. Install with:
-`python -m pip install pydeck`""")
-        elif outlook_rows:
-            layer = pdk.Layer(
+        layers = []
+        if features:
+            layers.append(pdk.Layer(
                 "ScatterplotLayer",
-                data=outlook_rows,
+                data=features,
                 get_position='[lon, lat]',
                 get_radius="radius",
                 get_fill_color="color",
@@ -404,17 +264,146 @@ with tab_trails:
                 stroked=True,
                 get_line_color=[0, 0, 0],
                 line_width_min_pixels=1,
+            ))
+        if out_rows_for_map:
+            out_feats = build_features_out_of_range(out_rows_for_map, exclude_key=exclude_key)
+            layers.append(pdk.Layer(
+                "ScatterplotLayer",
+                data=out_feats,
+                get_position='[lon, lat]',
+                get_radius="radius",
+                filled=False,
+                stroked=True,
+                get_line_color=[128, 0, 128],
+                line_width_min_pixels=2,
+                pickable=True,
+            ))
+        if curve_pick is not None:
+            clat, clon = loc_lookup.get(curve_pick["key"], (None, None))
+            if clat is not None:
+                tri = triangle_coords(clat, clon, size_m=5000)
+                layers.append(pdk.Layer(
+                    "PolygonLayer",
+                    data=[{"polygon": tri, "name": curve_pick["name"]}],
+                    get_polygon="polygon",
+                    get_fill_color=[255, 100, 0, 220],
+                    get_line_color=[0, 0, 0, 255],
+                    line_width_min_pixels=2,
+                    pickable=True,
+                ))
+
+        tooltip = {
+            "html": ("<b>#{rank} {name}</b><br/>Score: <b>{score}</b><br/>"
+                     "Window: {window}<br/>Drive: ~{drive} min<br/><hr style='margin:4px 0'/>"
+                     "Weather: {weather}<br/>Trail: {trail}<br/>Terrain fit: {terrain_fit}<br/>Proximity: {proximity}<br/>Secondary: {secondary}"),
+            "style": {"backgroundColor": "rgba(30,30,30,0.9)", "color": "white"}
+        }
+        deck = pdk.Deck(
+            layers=layers,
+            initial_view_state=pdk.ViewState(latitude=avg_lat, longitude=avg_lon, zoom=7, pitch=0),
+            map_style=None,
+            tooltip=tooltip,
+        )
+        st.pydeck_chart(deck, use_container_width=True)
+
+        with st.expander("Legend / colors"):
+            st.markdown(
+                "- **#1** green • **#2** yellow • **#3** blue • **#4+** purple\n"
+                "- **Orange triangle** = curve ball (≤ +60 min beyond the #1 filtered drive)\n"
+                "- **Hollow purple circle** = outside current Max drive (not considered in main ranking)"
             )
-            avg_lat = sum([r["lat"] for r in outlook_rows]) / len(outlook_rows)
-            avg_lon = sum([r["lon"] for r in outlook_rows]) / len(outlook_rows)
-            deck = pdk.Deck(
-                layers=[layer],
-                initial_view_state=pdk.ViewState(latitude=avg_lat, longitude=avg_lon, zoom=6.8, pitch=0),
-                map_style=None,
-                tooltip={"html": "<b>{name}</b><br/>Trail condition: <b>{score}</b>",
-                         "style": {"backgroundColor": "rgba(30,30,30,0.9)", "color": "white"}},
-            )
-            st.pydeck_chart(deck, use_container_width=True)
-            st.caption("Projection uses the same trail-scoring mode as Top Picks (set in Advanced → Trail scoring mode).")
-        else:
-            st.info("No locations available to display.")
+    else:
+        st.info("No locations to display with current filters.")
+
+# Results under the map
+for i, r in enumerate(rows_ok[:5], start=1):
+    with st.container(border=True):
+        st.markdown(f"### {i}) {r['name']} — **{r['score']}**")
+        comps = r["components"]
+        c = st.columns(5)
+        c[0].metric("Weather", comps["weather"])
+        c[1].metric("Trail", comps["trail"])
+        c[2].metric("Proximity", comps["proximity"])
+        c[3].metric("Terrain fit", comps["terrain_fit"])
+        c[4].metric("Secondary", comps["secondary"])
+        st.write(f"**Window:** {r['recommend_window']} | **Drive:** ~{r['drive_est_min']} min")
+        for n in r["notes"]:
+            st.write(f"- {n}")
+
+st.subheader("Alternates")
+for r in rows_ok[5:7]:
+    st.write(f"- {r['name']} — {r['score']}")
+
+# ---- Trail conditions section ----
+st.markdown("---")
+st.header("Trail conditions")
+
+# History table (daily aggregate, last 10 days)
+with st.expander("History (last 10 days) — daily aggregates", expanded=False):
+    days = 10; window = 5
+    season_tc = season_val
+    data_hist = {}
+    for loc in locs:
+        series = trail_condition_series(loc, season_tc, days=days, window=window)
+        data_hist[key_to_name[loc.key]] = series
+    today_dt = dt.date.today()
+    dates = [(today_dt - dt.timedelta(days=(days - i))) for i in range(1, days+1)]
+    df = pd.DataFrame(data_hist, index=[d.strftime("%d %b") for d in dates]).T
+    try:
+        import matplotlib  # ensure availability for Styler gradients
+        styled = df.style.background_gradient(cmap="Greens", axis=1)
+        st.dataframe(styled, use_container_width=True)
+    except Exception:
+        st.warning("Matplotlib not available — showing table without heatmap shading.")
+        st.dataframe(df, use_container_width=True)
+    st.caption("Each cell is a trail condition score (0–100) for that day, computed from the preceding 5-day rainfall at that location.")
+
+# Projection map for the selected date
+with st.expander("Projection for selected date", expanded=True):
+    mode_note = "Time-aware (hourly up to start time)" if trail_mode_eff == "time_aware" else "Daily aggregate"
+    st.caption(f"Mode: **{mode_note}** — follows the ride date selector above.")
+    outlook_rows = []
+    for loc in locs:
+        score = trail_condition_for_date_outlook(loc, season_val, depart_dt, mode=trail_mode_eff)
+        lat, lon = loc_lookup.get(loc.key, (None, None))
+        if lat is None:
+            continue
+        s = max(0.0, min(100.0, score))
+        g = int(255 * (s / 100.0))
+        r = int(255 * (1.0 - s / 100.0))
+        b = 0
+        outlook_rows.append({
+            "name": key_to_name[loc.key],
+            "lat": lat, "lon": lon,
+            "score": round(score, 1),
+            "color": [r, g, b, 220],
+            "radius": 1000 + 30 * s,
+        })
+
+    if not HAVE_PYDECK:
+        st.warning("""pydeck is not installed, so the map is hidden. Install with:
+`python -m pip install pydeck`""")
+    elif outlook_rows:
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=outlook_rows,
+            get_position='[lon, lat]',
+            get_radius="radius",
+            get_fill_color="color",
+            pickable=True,
+            stroked=True,
+            get_line_color=[0, 0, 0],
+            line_width_min_pixels=1,
+        )
+        avg_lat = sum([r["lat"] for r in outlook_rows]) / len(outlook_rows)
+        avg_lon = sum([r["lon"] for r in outlook_rows]) / len(outlook_rows)
+        deck = pdk.Deck(
+            layers=[layer],
+            initial_view_state=pdk.ViewState(latitude=avg_lat, longitude=avg_lon, zoom=6.8, pitch=0),
+            map_style=None,
+            tooltip={"html": "<b>{name}</b><br/>Trail condition: <b>{score}</b>",
+                     "style": {"backgroundColor": "rgba(30,30,30,0.9)", "color": "white"}},
+        )
+        st.pydeck_chart(deck, use_container_width=True)
+    else:
+        st.info("No locations available to display.")
