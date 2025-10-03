@@ -351,10 +351,10 @@ with tab_trails:
         try:
             import matplotlib  # ensure availability for Styler gradients
             styled = df.style.background_gradient(cmap="Greens", axis=1)
-            st.dataframe(styled, width="stretch")
+            st.dataframe(styled, use_container_width=True)
         except Exception:
             st.warning("Matplotlib not available — showing table without heatmap shading.")
-            st.dataframe(df, width="stretch")
+            st.dataframe(df, use_container_width=True)
         st.caption("Each cell is a trail condition score (0–100) for that day, computed from the preceding 5-day rainfall at that location.")
 
     with sub_out:

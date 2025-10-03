@@ -254,10 +254,10 @@ def score_secondary(hourly: dict, depart: dt.datetime, duration_h: float) -> flo
     return clamp(secondary, 0, 100)
 
 def assemble_reason(loc: Location, wx_s: float, tr_s: float, prox_s: float, terr_s: float, sec_s: float,
-                    depart: dt.datetime, duration_h: float, drive_est: int, precip7: float,
+                    depart: dt.datetime, duration_h: float, drive_est: int,
                     wind_mean: float, gust_mean: float, rain_prob: float) -> List[str]:
     notes = []
-    notes.append(f"Dryness driven by recent rainfall → trail {int(tr_s)}/100.")
+    notes.append(f"Trail score {int(tr_s)}/100 (recent rain lowers score; dry-day streak raises score).")
     notes.append(f"Wind: {int(wind_mean)} avg (gust {int(gust_mean)}); Weather score {int(wx_s)}.")
     notes.append(f"Rain probability in window: {int(rain_prob)}%.")
     if drive_est > 0: notes.append(f"Drive: ~{drive_est} min at {depart:%H:%M}. Proximity {int(prox_s)}.")
@@ -272,7 +272,7 @@ def set_tech_bias_override(v: float):
 def set_prox_override(v: bool):
     global PROX_OVERRIDE; PROX_OVERRIDE = bool(v)
 
-# ---------- Main scoring ----------
+# ---------- Main weather scoring ----------
 def score_weather(hourly: dict, depart: dt.datetime, duration_h: float) -> float:
     times = [dt.datetime.fromisoformat(t) for t in hourly["time"]]
     end = depart + dt.timedelta(hours=duration_h)
@@ -293,6 +293,18 @@ def score_weather(hourly: dict, depart: dt.datetime, duration_h: float) -> float
     temp_score = 100 - clamp(cold_pen + heat_pen, 0, 40)
     return clamp(0.5 * rain_score + 0.3 * wind_score + 0.1 * sun_score + 0.1 * temp_score, 0, 100)
 
+# Helpers for daily indexing
+def _find_day_index(daily_times: list, target_date: dt.date) -> int:
+    for i, iso in enumerate(daily_times or []):
+        try:
+            d = dt.date.fromisoformat(iso)
+            if d == target_date:
+                return i
+        except Exception:
+            pass
+    return -1
+
+# ----- Score a single location -----
 def score_location(
     loc: Location,
     depart_dt: dt.datetime,
@@ -310,9 +322,12 @@ def score_location(
     wx_s = score_weather(hourly, depart_dt, duration_h)
 
     precip_list = daily.get("precipitation_sum", [])
-    # Use yesterday as the endpoint for trail dryness to avoid overreacting to forecast uncertainty
-    tr_s = evaluate_trail_dryness(loc.drainage, season, precip_list, end_idx=len(precip_list)-2, window=5)
+    times = daily.get("time", [])
+    idx_today = _find_day_index(times, dt.date.today())
+    end_idx = idx_today if (isinstance(idx_today, int) and idx_today >= 0) else (len(precip_list) - 1)
+    tr_s = evaluate_trail_dryness(loc.drainage, season, precip_list, end_idx=end_idx, window=5)
 
+    # Drive estimate
     hk = None; hcoords = None
     if home_key is not None or home_coords is not None:
         hk = home_key or "custom"; hcoords = home_coords
@@ -339,9 +354,9 @@ def score_location(
     total = (use_w["weather"] * wx_s + use_w["trail"] * tr_s + use_w["proximity"] * prox_s +
              use_w["terrain_fit"] * terr_s + use_w["secondary"] * sec_s)
 
-    times = [dt.datetime.fromisoformat(t) for t in hourly["time"]]
+    times_h = [dt.datetime.fromisoformat(t) for t in hourly["time"]]
     end = depart_dt + dt.timedelta(hours=duration_h)
-    idx = [i for i, t in enumerate(times) if depart_dt <= t < end]
+    idx = [i for i, t in enumerate(times_h) if depart_dt <= t < end]
     if idx:
         wind_mean = sum(hourly["wind_speed_10m"][i] for i in idx) / len(idx)
         gust_mean = sum(hourly["wind_gusts_10m"][i] for i in idx) / len(idx)
@@ -350,7 +365,7 @@ def score_location(
         wind_mean = gust_mean = rain_prob = 0.0
 
     reason = assemble_reason(loc, wx_s, tr_s, prox_s, terr_s, sec_s, depart_dt, duration_h,
-                             drive_est, 0.0, wind_mean, gust_mean, rain_prob)
+                             drive_est, wind_mean, gust_mean, rain_prob)
 
     return {
         "key": loc.key, "name": loc.name, "score": round(total, 1),
@@ -391,16 +406,6 @@ def trail_condition_series(loc: Location, season: str, days: int = 10, window: i
     return series
 
 # ----- Outlook today & tomorrow (uses forecast) -----
-def _find_day_index(daily_times: list, target_date: dt.date) -> int:
-    for i, iso in enumerate(daily_times or []):
-        try:
-            d = dt.date.fromisoformat(iso)
-            if d == target_date:
-                return i
-        except Exception:
-            pass
-    return -1
-
 def trail_condition_outlook(loc: Location, season: str, window: int = 5) -> Dict[str, float]:
     data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=15, forecast_days=2)
     daily = data.get("daily", {})
@@ -408,9 +413,8 @@ def trail_condition_outlook(loc: Location, season: str, window: int = 5) -> Dict
     times = daily.get("time", [])
     if not precip or not times:
         return {"today": 50.0, "tomorrow": 50.0}
-    today = dt.date.today()
-    idx_today = _find_day_index(times, today)
-    idx_tom = _find_day_index(times, today + dt.timedelta(days=1))
+    idx_today = _find_day_index(times, dt.date.today())
+    idx_tom = _find_day_index(times, dt.date.today() + dt.timedelta(days=1))
     out = {}
     out["today"] = round(evaluate_trail_dryness(loc.drainage, season, precip, end_idx=idx_today if idx_today>=0 else len(precip)-2, window=window), 1)
     out["tomorrow"] = round(evaluate_trail_dryness(loc.drainage, season, precip, end_idx=idx_tom if idx_tom>=0 else len(precip)-1, window=window), 1)
