@@ -111,7 +111,7 @@ def fetch_open_meteo(lat: float, lon: float, timezone: str, past_days: int = 7, 
     _WEATHER_CACHE[key] = (now, data)
     return data
 
-# ---------- Trail dryness (weighted + hard cap) ----------
+# ---------- Trail dryness (weighted + soft damping for streak) ----------
 def _drain_factor(drainage: str) -> float:
     if drainage in ("trail_centre", "rocky"):
         return 1.0
@@ -136,6 +136,8 @@ def _consecutive_dry_days(daily_mm: list, end_idx: int, dry_thresh_mm: float = 1
     return cnt
 
 def evaluate_trail_dryness(drainage: str, season: str, daily_mm: list, end_idx: int, window: int = 5) -> float:
+    """Returns 0..100 where higher = drier. Uses weighted recent rain -> exponential decay,
+    then applies a SOFT damping based on dry-day streak (no hard 60-cap)."""
     if not daily_mm or end_idx < 0:
         return 50.0
     base_weights = [0.40, 0.25, 0.18, 0.11, 0.06, 0.04, 0.02]
@@ -147,15 +149,18 @@ def evaluate_trail_dryness(drainage: str, season: str, daily_mm: list, end_idx: 
         return 50.0
     w = w[-len(mm_window):]
     weighted_mm = sum(m * ww for m, ww in zip(mm_window[::-1], w))  # most recent gets highest weight
-    k_map = {"trail_centre": 0.028, "rocky": 0.032, "mixed": 0.040, "mixed_long_mud": 0.050, "moor_slow": 0.060}
-    k = k_map.get(drainage, 0.040)
+    # Slightly tweaked decay constants to add separation after modest rain:
+    k_map = {"trail_centre": 0.030, "rocky": 0.033, "mixed": 0.042, "mixed_long_mud": 0.052, "moor_slow": 0.062}
+    k = k_map.get(drainage, 0.042)
     base_score = clamp(100.0 * math.exp(-k * weighted_mm), 0.0, 100.0)
+    # Soft damping by dry-day streak (0.65..1.00 multiplier)
     base_days = _season_base_days(season)
     factor = _drain_factor(drainage)
     days_needed = base_days * factor
     dry_days = _consecutive_dry_days(daily_mm, end_idx, dry_thresh_mm=1.0, lookback=30)
-    cap_max = 60.0 + 40.0 * clamp(dry_days / max(1.0, days_needed), 0.0, 1.0)
-    return min(base_score, cap_max)
+    streak_ratio = clamp(dry_days / max(1.0, days_needed), 0.0, 1.0)
+    damp = 0.65 + 0.35 * streak_ratio
+    return clamp(base_score * damp, 0.0, 100.0)
 
 # ---------- Drive & proximity ----------
 def _haversine_km(lat1, lon1, lat2, lon2):
@@ -258,7 +263,7 @@ def assemble_reason(loc: Location, total: float, tr_s: float, prox_s: float, ter
                     wind_mean: float, gust_mean: float, rain_prob: float) -> List[str]:
     notes = []
     notes.append(f"Trail score {int(tr_s)}/100 (recent rain lowers score; dry-day streak raises score).")
-    notes.append(f"Wind: {int(wind_mean)} avg (gust {int(gust_mean)}); Weather score {int(total - tr_s):d}.")
+    notes.append(f"Wind: {int(wind_mean)} avg (gust {int(gust_mean)}).")
     notes.append(f"Rain probability in window: {int(rain_prob)}%.")
     if drive_est > 0: notes.append(f"Drive: ~{drive_est} min at {depart:%H:%M}. Proximity {int(prox_s)}.")
     else: notes.append("Start from home; no drive needed.")
@@ -346,7 +351,8 @@ def trail_score_for(loc: Location, season: str, data: dict, target_date: dt.date
     synth = precip.copy()
     if mode == "time_aware":
         eff = _effective_recent_mm(hourly, depart_dt, lookback_h=24)
-        synth[idx] = max(synth[idx] if idx < len(synth) else 0.0, eff)
+        base = synth[idx] if idx < len(synth) else 0.0
+        synth[idx] = base + 0.6 * eff  # blend-in recent hours (not max-replace)
     return evaluate_trail_dryness(loc.drainage, season, synth, end_idx=idx, window=window)
 
 # ----- Score a single location -----
