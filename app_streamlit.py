@@ -21,6 +21,7 @@ from mtb_agent import (
     set_weight_override,
     trail_condition_series_legacy,   # History uses legacy model
     trail_condition_for_date_outlook,
+    reload_config, 
 )
 
 st.set_page_config(page_title="MTB Ride Finder — Regions + Legacy History", layout="wide")
