@@ -375,7 +375,7 @@ with st.expander("Projection for selected date — reflects selected start time"
         st.pydeck_chart(deck, use_container_width=True)
         st.caption("Colour scale: **Red = wettest/poorest**, **Orange = marginal**, **Yellow = decent**, **Green = driest/best**.")
     else:
-        st.info("No locations available to display.")        )
+        st.info("No locations available to display.")        
         st.pydeck_chart(deck, use_container_width=True)
         st.caption("Colour scale: **Red = wettest**, **Yellow = moderate**, **Green = driest**. "
                    "Higher values indicate better trail conditions.")
