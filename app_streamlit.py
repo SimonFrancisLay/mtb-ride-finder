@@ -111,7 +111,7 @@ set_weight_override(weights if not use_defaults else None)
 
 # ---------------- Region filter + include/exclude ----------------
 def in_regions(k: str) -> bool:
-    if not region_sel: return True
+    if not region_sel: return False
     return key_to_region.get(k, "") in region_sel
 
 locs = [l for l in LOCATIONS if in_regions(l.key) and (not include_keys or l.key in include_keys) and (l.key not in exclude_keys)]
