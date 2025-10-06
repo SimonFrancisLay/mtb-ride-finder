@@ -319,25 +319,56 @@ with st.expander("Projection for selected date — reflects selected start time"
     mode_note = "Time-aware (hourly up to start time)" if trail_mode_eff == "time_aware" else "Daily aggregate"
     st.caption(f"Mode: **{mode_note}** — follows the ride date selector above.")
     outlook_rows = []
+
     for loc in locs:
         score = trail_condition_for_date_outlook(loc, season_val, depart_dt, mode=trail_mode_eff)
         lat, lon = loc_lookup.get(loc.key, (None, None))
-        if lat is None: continue
+        if lat is None:
+            continue
         s = max(0.0, min(100.0, score))
-        g = int(255 * (s / 100.0)); r = int(255 * (1.0 - s / 100.0)); b = 0
-        outlook_rows.append({"name": key_to_name[loc.key], "lat": lat, "lon": lon, "score": round(score, 1),
-                             "color": [r, g, b, 220], "radius": 1000 + 30 * s})
+
+        # 🌈 Red = wetter (low scores), Green = drier (high scores)
+        r = int(255 * (1.0 - s / 100.0))
+        g = int(255 * (s / 100.0))
+        b = 0
+
+        outlook_rows.append({
+            "name": key_to_name[loc.key],
+            "lat": lat,
+            "lon": lon,
+            "score": round(score, 1),
+            "color": [r, g, b, 220],
+            "radius": 1000 + 30 * s,
+        })
 
     if not HAVE_PYDECK:
         st.warning("pydeck is not installed, so the map is hidden. Install with: `python -m pip install pydeck`")
     elif outlook_rows:
-        layer = pdk.Layer("ScatterplotLayer", data=outlook_rows, get_position='[lon, lat]', get_radius="radius",
-                          get_fill_color="color", pickable=True, stroked=True, get_line_color=[0,0,0], line_width_min_pixels=1)
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=outlook_rows,
+            get_position='[lon, lat]',
+            get_radius="radius",
+            get_fill_color="color",
+            pickable=True,
+            stroked=True,
+            get_line_color=[0, 0, 0],
+            line_width_min_pixels=1,
+        )
         avg_lat = sum([r["lat"] for r in outlook_rows]) / len(outlook_rows)
         avg_lon = sum([r["lon"] for r in outlook_rows]) / len(outlook_rows)
-        deck = pdk.Deck(layers=[layer], initial_view_state=pdk.ViewState(latitude=avg_lat, longitude=avg_lon, zoom=6.8, pitch=0),
-                        map_style=None, tooltip={"html": "<b>{name}</b><br/>Trail condition: <b>{score}</b>",
-                        "style": {"backgroundColor": "rgba(30,30,30,0.9)", "color": "white"}})
+
+        deck = pdk.Deck(
+            layers=[layer],
+            initial_view_state=pdk.ViewState(latitude=avg_lat, longitude=avg_lon, zoom=6.8, pitch=0),
+            map_style=None,
+            tooltip={
+                "html": "<b>{name}</b><br/>Trail condition: <b>{score}</b>",
+                "style": {"backgroundColor": "rgba(30,30,30,0.9)", "color": "white"},
+            },
+        )
         st.pydeck_chart(deck, use_container_width=True)
+        st.caption("Colour scale: **Red = wettest**, **Yellow = moderate**, **Green = driest**. "
+                   "Higher values indicate better trail conditions.")
     else:
         st.info("No locations available to display.")
