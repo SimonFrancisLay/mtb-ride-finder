@@ -13,16 +13,18 @@ from mtb_agent import (
     LOCATIONS,
     DEFAULT_WEIGHTS,
     season_from_date,
-    reload_config,
     score_location,
     set_tech_bias_override,
     set_prox_override,
     set_home_by_key,
     set_weight_override,
-    trail_condition_series_legacy,   # History uses legacy model
+    trail_condition_series_legacy,
     trail_condition_for_date_outlook,
-    reload_config, 
+    reload_config,  # 👈 NEW
 )
+
+# 👇 Force reload of config.yaml on every app run
+reload_config()
 
 st.set_page_config(page_title="MTB Ride Finder — Regions + Legacy History", layout="wide")
 
