@@ -197,7 +197,12 @@ if col_btn2.button("Save to disk"):
 
 st.sidebar.markdown("---")
 
-uploaded = st.sidebar.file_uploader("Upload config.yaml", type=["yaml","yml"], help="Load a YAML to edit.")
+uploaded = st.sidebar.file_uploader(
+    "Upload config.yaml",
+    type=["yaml", "yml"],
+    help="Load a YAML to edit.",
+    key="upload_cfg_sidebar"  # <-- unique key prevents duplicate ID errors
+)
 if uploaded is not None:
     text = uploaded.read().decode("utf-8")
     st.session_state["cfg_raw"] = load_yaml(text)
