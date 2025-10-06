@@ -1,3 +1,7 @@
+
+# MTB Ride Finder configuration (Full UK version)
+# drive_min_typical left as [0,0]; computed dynamically from start location.
+
 weights:
   weather: 0.25
   trail: 0.35
@@ -16,125 +20,202 @@ locations:
     drainage: "trail_centre"
     mud_sensitivity: "low"
     duration_range: [1.0, 5.0]
-    notes: "Start from home; flat gravel; well draining."
+    notes: |
+      Flat gravel/multi-use surfaces for aerobic volume and easy spins.
+      Very tolerant to rain; minimal maintenance impact.
+      Great backup when hills are stormy or ruined by mud.
+
   - key: hayfield
     region: "NW England"
     name: Dark Peak (Hayfield)
     lat: 53.378
     lon: -1.948
-    drive_min_typical: [45, 60]
+    drive_min_typical: [0, 0]
     terrain: "hills, steep, technical"
     drainage: "rocky"
     mud_sensitivity: "med"
     duration_range: [1.0, 6.0]
-    notes: "Rocky, technical; stays wet in winter once it turns."
-  - key: marple
-    region: "NW England"
-    name: Dark Peak (Marple)
-    lat: 53.394
-    lon: -2.062
-    drive_min_typical: [30, 40]
-    terrain: "hills, technical"
-    drainage: "mixed"
-    mud_sensitivity: "high"
-    duration_range: [1.0, 2.5]
-    notes: "Can be muddy with little rain; good start point to link Hayfield."
-  - key: eyam
-    region: "NW England"
-    name: White Peak (Eyam)
-    lat: 53.283
-    lon: -1.680
-    drive_min_typical: [60, 70]
-    terrain: "hills, some_tech"
-    drainage: "mixed"
-    mud_sensitivity: "med"
-    duration_range: [2.5, 4.0]
-    notes: "Well-draining limestone sections with some muddier bits."
-  - key: llandegla
-    region: "North Wales"
-    name: North Wales (Llandegla)
-    lat: 53.067
-    lon: -3.115
-    drive_min_typical: [60, 75]
-    terrain: "trail_centre, technical, distance"
-    drainage: "trail_centre"
-    mud_sensitivity: "low"
-    duration_range: [1.0, 3.0]
-    notes: "Maintained trail centre; consistent surfaces when wet."
-  - key: clwydian
-    region: "North Wales"
-    name: Clwydian Range
-    lat: 53.162
-    lon: -3.269
-    drive_min_typical: [65, 75]
-    terrain: "hills, some_tech"
-    drainage: "mixed"
-    mud_sensitivity: "med"
-    duration_range: [2.5, 5.0]
-    notes: "Good climbs and fun descents; mixed rock/mud."
-  - key: windermere
-    region: "NW England"
-    name: South Lakes (Windermere)
-    lat: 54.380
-    lon: -2.907
-    drive_min_typical: [70, 90]
-    terrain: "hills, some_tech"
-    drainage: "mixed_long_mud"
-    mud_sensitivity: "high"
-    duration_range: [2.5, 5.0]
-    notes: "Steep climbing; some extended muddy sections."
-  - key: keswick
-    region: "NW England"
-    name: North Lakes (Keswick)
-    lat: 54.601
-    lon: -3.136
-    drive_min_typical: [80, 90]
-    terrain: "hills, steep, technical"
-    drainage: "rocky"
-    mud_sensitivity: "med"
-    duration_range: [1.5, 3.0]
-    notes: "Steep, rocky tech; usually better for shorter/moderate rides."
+    notes: |
+      Rocky descents and exposed moor edge climbs.
+      Stays wet in winter once saturated; wind exposure is a factor.
+      Superb when dry/high pressure, tough but rewarding otherwise.
+
   - key: malham
     region: "Yorkshire Dales"
     name: Malham & Gordale
     lat: 54.061
     lon: -2.154
-    drive_min_typical: [90, 120]
+    drive_min_typical: [0, 0]
     terrain: "hills, limestone, some_tech"
     drainage: "rocky"
     mud_sensitivity: "low"
     duration_range: [2.0, 5.0]
-    notes: "Limestone pavements and bridleways; drains well, exposed."
-  - key: sedbergh
+    notes: |
+      Limestone pavements, steps and walled lanes; big vistas.
+      Excellent wet resilience on rock; grassy links can be slick.
+      Great shoulder‑season venue when Peaks are boggy.
+
+  - key: reeth
     region: "Yorkshire Dales"
-    name: Sedbergh & Howgills
-    lat: 54.323
-    lon: -2.527
-    drive_min_typical: [90, 120]
-    terrain: "hills, grassy, some_tech"
+    name: Swaledale (Reeth)
+    lat: 54.385
+    lon: -1.944
+    drive_min_typical: [0, 0]
+    terrain: "hills, moor, some_tech"
+    drainage: "mixed"
+    mud_sensitivity: "med"
+    duration_range: [2.0, 5.0]
+    notes: |
+      Moorland crossings, mining tracks, and stony lanes.
+      Mixed drainage; some boggy saddles linger.
+      Quality big‑day country with proper remote feel.
+
+  - key: llandegla
+    region: "North Wales"
+    name: Llandegla Trail Centre
+    lat: 53.067
+    lon: -3.115
+    drive_min_typical: [0, 0]
+    terrain: "trail_centre, technical, distance"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.0, 3.0]
+    notes: |
+      Surfaced red and black loops hold up superbly in wet.
+      Drains fast; a consistent fallback in bad spells.
+      Ideal for short sharp sessions or skill practice.
+
+  - key: afan
+    region: "South Wales"
+    name: Afan Forest Park
+    lat: 51.663
+    lon: -3.651
+    drive_min_typical: [0, 0]
+    terrain: "trail_centre, technical, hills"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 5.0]
+    notes: |
+      Multiple surfaced trail loops with excellent drainage.
+      Forested and all-weather; a classic South Wales venue.
+      Suits endurance or repeated technical runs.
+
+  - key: cannock
+    region: "Staffordshire"
+    name: Cannock Chase
+    lat: 52.754
+    lon: -2.018
+    drive_min_typical: [0, 0]
+    terrain: "trail_centre, distance, some_tech"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 4.0]
+    notes: |
+      Fast-draining trail centre near the Midlands.
+      Great for structured efforts; consistent conditions.
+      Can be busy weekends but solid wet-weather choice.
+
+  - key: peashill
+    region: "Surrey Hills"
+    name: Peaslake / Pitch & Holmbury
+    lat: 51.200
+    lon: -0.441
+    drive_min_typical: [0, 0]
+    terrain: "technical, steep, hills"
+    drainage: "rocky"
+    mud_sensitivity: "low"
+    duration_range: [2.0, 5.0]
+    notes: |
+      Loamy Surrey Hills singletrack; flow and tech combined.
+      Drainage lines make it rideable even after rain.
+      Excellent year-round riding with elevation variety.
+
+  - key: dartmoor_princetown
+    region: "SW England"
+    name: Dartmoor — Princetown Loops
+    lat: 50.543
+    lon: -3.990
+    drive_min_typical: [0, 0]
+    terrain: "hills, moor, distance"
     drainage: "mixed_long_mud"
     mud_sensitivity: "high"
-    duration_range: [2.0, 4.5]
-    notes: "Grassy Howgill descents; slick when saturated."
+    duration_range: [2.0, 5.0]
+    notes: |
+      Peat and granite uplands; exposed and weather sensitive.
+      Rapidly changing conditions; dries slowly after long rain.
+      Stunning in crisp winter highs or summer evenings.
+
+  - key: exmoor_porlock
+    region: "SW England"
+    name: Exmoor — Porlock & Doone
+    lat: 51.208
+    lon: -3.598
+    drive_min_typical: [0, 0]
+    terrain: "hills, some_tech"
+    drainage: "mixed"
+    mud_sensitivity: "med"
+    duration_range: [2.0, 5.0]
+    notes: |
+      Coastal climbs, wooded descents, and classic Exmoor lanes.
+      Mixed drainage but dries faster than Dartmoor.
+      Rewarding in spring or early autumn windows.
+
+  - key: thetford
+    region: "East Anglia"
+    name: Thetford Forest
+    lat: 52.433
+    lon: 0.718
+    drive_min_typical: [0, 0]
+    terrain: "distance, flat, trail_centre"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.0, 4.0]
+    notes: |
+      Flat pine forest network of sandy gravel trails.
+      Rides well all year; zero climbing but excellent distance base.
+      Ideal for endurance or steady winter training.
+
   - key: glentress
     region: "Scottish Borders"
-    name: 7Stanes — Glentress
+    name: Glentress Trail Centre (7Stanes)
     lat: 55.650
     lon: -3.146
-    drive_min_typical: [210, 270]
+    drive_min_typical: [0, 0]
     terrain: "trail_centre, technical, hills"
     drainage: "trail_centre"
     mud_sensitivity: "low"
     duration_range: [2.0, 5.0]
-    notes: "Premier trail-centre surfaces; holds up in the wet."
+    notes: |
+      Premier Scottish trail centre; surfaced and consistent.
+      Holds up in almost all weather; sheltered in forest.
+      Balanced climbs and descents make it ideal for all riders.
+
+  - key: laggan_wolftrax
+    region: "Scottish Highlands"
+    name: Laggan Wolftrax
+    lat: 57.000
+    lon: -4.276
+    drive_min_typical: [0, 0]
+    terrain: "trail_centre, technical, hills"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 4.0]
+    notes: |
+      Granite-based surfaces; highly durable and weatherproof.
+      Steep technical lines with strong drainage.
+      Perfect summer or winter hard option.
+
   - key: torridon
     region: "Scottish Highlands"
     name: Torridon
     lat: 57.546
     lon: -5.516
-    drive_min_typical: [500, 600]
+    drive_min_typical: [0, 0]
     terrain: "steep, technical, big_mountain"
     drainage: "rocky"
     mud_sensitivity: "low"
     duration_range: [3.0, 6.0]
-    notes: "Big-mountain rock; exposure limits, not mud."
+    notes: |
+      Epic big-mountain rock terrain; very remote.
+      Never truly muddy; weather and wind define rideability.
+      Bucket-list terrain for strong riders in good conditions.
