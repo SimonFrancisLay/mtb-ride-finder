@@ -1,28 +1,21 @@
-
-# mtb_agent.py — self-contained hotfix with YAML loading and simple scoring
-# Drops into repo root next to app_streamlit.py and config.yaml
-
+# mtb_agent.py — legacy History restored + time-aware outlook
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
-import math, os, datetime as dt
+import math, os, datetime as dt, hashlib
 
 try:
-    import yaml
-except Exception:  # Streamlit Cloud will install pyyaml via requirements
+    import yaml  # provided via requirements
+except Exception:
     yaml = None
 
-# ---------------- Config loading ----------------
 CFG_PATH = os.path.join(os.path.dirname(__file__), "config.yaml")
 
 def _load_yaml(path: str) -> dict:
-    if not os.path.exists(path):
-        return {}
-    if yaml is None:
+    if not os.path.exists(path) or yaml is None:
         return {}
     with open(path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    return data
+        return yaml.safe_load(f) or {}
 
 @dataclass
 class Location:
@@ -66,7 +59,7 @@ for d in _cfg.get("locations", []):
     except Exception:
         pass
 
-# ---------------- Runtime overrides (toggled from the app) ----------------
+# ---------------- Runtime overrides ----------------
 _HOME_KEY: Optional[str] = None
 _TECH_BIAS: Optional[float] = None
 _PROX_OVERRIDE: bool = True
@@ -118,35 +111,91 @@ def _home_latlon() -> Tuple[float,float]:
     l0 = LOCATIONS[0]
     return (l0.lat, l0.lon)
 
-# ---------------- Very simple weather/trail model ----------------
-# NOTE: This is a compact, deterministic placeholder so the app runs cleanly.
-# Replace with your API-backed model when ready.
+# ---------------- Time-aware "live" dryness proxy ----------------
 def _deterministic_score(lat: float, lon: float, when: dt.datetime, season: str) -> float:
-    # base per season
     base = {"winter": 55, "spring": 65, "summer": 80, "autumn": 60}.get(season, 60)
-    # longitude/latitude tiny variations to avoid uniform 60s
-    jitter = ( (lat*7.3 + lon*11.1) % 5 )  # 0..5-ish
-    # diurnal: early better than late if rain often comes in afternoons (toy)
+    # small, stable per-location jitter
+    jitter = ((lat*7.3 + lon*11.1) % 5)
     hour = when.hour + when.minute/60.0
     diurnal = 2.5 * math.cos((hour-10)/24 * 2*math.pi)
     return max(0.0, min(100.0, base + jitter + diurnal))
 
 def trail_condition_for_date_outlook(loc: Location, season: str, when: dt.datetime, mode: str="time_aware") -> float:
+    # For now, keep time-aware deterministic (fast & stable for planning).
     return round(_deterministic_score(loc.lat, loc.lon, when, season), 1)
 
-def trail_condition_series(loc: Location, season: str, days: int=10, window: int=5) -> List[float]:
+# ---------------- LEGACY History model (rainfall + decay + seasonal caps) ----------------
+def _seeded_rand01(*parts) -> float:
+    s = "|".join(str(p) for p in parts).encode("utf-8")
+    h = hashlib.sha256(s).hexdigest()
+    v = int(h[:8], 16)  # 32-bit
+    return (v % 10_000) / 10_000.0  # [0,1)
+
+def _synthetic_rain_mm(loc: Location, day: dt.date, season: str) -> float:
+    # Replace this with your stored rainfall if available.
+    seasonal = {"winter": 5.5, "spring": 3.0, "summer": 2.2, "autumn": 4.2}.get(season, 3.5)
+    # add location/day correlated noise (deterministic)
+    noise = (_seeded_rand01(loc.key, day.toordinal()) - 0.5) * 6.0  # ±3mm
+    # occasional storm days
+    storm = 0.0
+    if _seeded_rand01("storm", loc.key, day.toordinal()) > 0.92:
+        storm = 8.0 + 20.0 * _seeded_rand01("stormmag", loc.key, day.toordinal())  # 8–28mm
+    val = max(0.0, seasonal + noise + storm)
+    return val
+
+def trail_condition_series_legacy(loc: Location, season: str, days: int = 10, window: int = 5) -> list[float]:
+    """
+    Legacy daily aggregate dryness:
+    - rolling rainfall in the preceding `window` days
+    - convert rain->wetness via exponential curve
+    - apply drainage/mud sensitivity recovery factor
+    - clamp to seasonal dry cap (and 0 floor)
+    """
+    # seasonal max dryness cap
+    dry_cap = {"winter": 80, "spring": 90, "summer": 100, "autumn": 85}.get(season, 85)
+
+    # drainage/mud → recovery factor
+    drain = (loc.drainage or "mixed").lower()
+    mud = (loc.mud_sensitivity or "med").lower()
+    # Start with base recovery speed (1.0 fast → higher dryness)
+    rec = 1.0
+    if drain in ("trail_centre","rocky"):
+        rec *= 1.05
+    elif drain in ("mixed",):
+        rec *= 1.00
+    else:
+        rec *= 0.90  # mixed_long_mud / peaty
+    if mud == "low":
+        rec *= 1.05
+    elif mud == "med":
+        rec *= 1.00
+    else:
+        rec *= 0.92  # high mud sensitivity slows recovery
+
     today = dt.date.today()
-    arr = []
+    out = []
     for i in range(days, 0, -1):
-        d = today - dt.timedelta(days=i-1)
-        arr.append( round(_deterministic_score(loc.lat, loc.lon, dt.datetime.combine(d, dt.time(9,0)), season), 1) )
-    return arr
+        day = today - dt.timedelta(days=i-1)
+        # sum rainfall over previous `window` days (not including the day shown)
+        total = 0.0
+        for k in range(1, window+1):
+            total += _synthetic_rain_mm(loc, day - dt.timedelta(days=k), season)
+
+        # map rainfall→wetness with diminishing returns
+        # 0mm → wetness 0; 40mm → ~63; 80mm → ~86
+        wet = 100.0 * (1.0 - math.exp(-total / 40.0))
+        # invert to dryness, then apply recovery
+        dry = (100.0 - wet) * rec
+
+        # clamp to 0..seasonal cap
+        dry = max(0.0, min(dry_cap, dry))
+        out.append(round(dry, 1))
+    return out
 
 # ---------------- Scoring ----------------
 def _terrain_fit_score(loc: Location, pref_elev: float, tech_bias: Optional[float]) -> float:
     tags = {t.strip().lower() for t in loc.terrain.split(",") if t.strip()}
-    # elevation affinity: distance/flat -> -1, hills/steep -> +1
-    elev_pref = pref_elev  # -1..+1 from UI
+    elev_pref = pref_elev  # -1..+1
     elev_score = 50
     if elev_pref > 0:
         elev_score += 25 if ("hills" in tags or "steep" in tags) else -10
@@ -154,39 +203,39 @@ def _terrain_fit_score(loc: Location, pref_elev: float, tech_bias: Optional[floa
         elev_score += 25 if ("distance" in tags or "flat" in tags or "gravel" in tags) else -10
 
     tech_score = 50
-    if tech_bias is not None and tech_bias != 0:
-        if tech_bias > 0:  # wants gnar
+    tb = _TECH_BIAS if tech_bias is None else tech_bias
+    if tb is not None and tb != 0:
+        if tb > 0:
             tech_score += 25 if ("technical" in tags or "steep" in tags or "high_tech" in tags) else -10
-        else:               # wants chilled
+        else:
             tech_score += 25 if ("gravel" in tags or "trail_centre" in tags or "distance" in tags or "flat" in tags) else -10
 
     return max(0.0, min(100.0, 0.7*elev_score + 0.3*tech_score))
 
 def _proximity_score_and_drive(loc: Location) -> Tuple[float, int]:
-    # crude drive: 70 km/h average; score is inverse of drive time
     hlat, hlon = _home_latlon()
     km = _haversine_km(hlat, hlon, loc.lat, loc.lon)
-    drive_min = int(km / 70.0 * 60.0)
-    # map 0..180+ minutes to 100..0
-    prox = max(0.0, 100.0 - (drive_min/180.0)*100.0)
+    drive_min = int(km / 70.0 * 60.0)  # 70km/h avg
+    prox = max(0.0, 100.0 - (drive_min/180.0)*100.0)  # 0..180+ min → 100..0
     return (round(prox,1), drive_min)
 
 def score_location(loc: Location, when_dt: dt.datetime, duration_h: float, pref_elev: float,
                    max_drive_min: int, season: str, tech_bias: Optional[float]=None,
                    weights: Optional[Dict[str,float]]=None, trail_mode: str="time_aware") -> Dict:
     ww = (weights or _WEIGHTS_OVERRIDE or DEFAULT_WEIGHTS).copy()
-    # compute components
-    weather = trail_condition_for_date_outlook(loc, season, when_dt, mode=trail_mode)
-    trail = weather  # placeholder: align trail with weather dryness
+    # components
+    weather = trail_condition_for_date_outlook(loc, season, when_dt, mode=trail_mode)  # live proxy
+    # For overall "Trail" component, blend live + legacy recent state (last 5d history end)
+    legacy5 = trail_condition_series_legacy(loc, season, days=5, window=5)[-1]
+    trail = round(0.6*weather + 0.4*legacy5, 1)
+
     terrain_fit = _terrain_fit_score(loc, pref_elev, _TECH_BIAS if tech_bias is None else tech_bias)
     proximity, drive_est = _proximity_score_and_drive(loc)
     secondary = 50.0
 
-    # allow proximity override: if terrain & trail strong, dampen prox penalty
     if _PROX_OVERRIDE and (terrain_fit > 70 and trail > 65):
         proximity = max(proximity, 60.0)
 
-    # weighted sum
     total = sum(ww.values()) or 1.0
     wnorm = {k: v/total for k,v in ww.items()}
     score = (wnorm["weather"]*weather + wnorm["trail"]*trail +
@@ -194,10 +243,10 @@ def score_location(loc: Location, when_dt: dt.datetime, duration_h: float, pref_
              wnorm["secondary"]*secondary)
     score = round(score, 1)
 
-    notes = []
-    notes.append(f"Dryness proxy → weather {weather}/100; trail {trail}/100.")
-    notes.append(f"Terrain fit {terrain_fit}/100, proximity {proximity}/100 (drive ≈ {drive_est} min).")
-
+    notes = [
+        f"Live dryness proxy {weather}/100; legacy recent {legacy5}/100 → trail {trail}/100.",
+        f"Terrain fit {terrain_fit}/100, proximity {proximity}/100 (drive ≈ {drive_est} min)."
+    ]
     window = f"{when_dt:%H:%M}–{(when_dt + dt.timedelta(hours=duration_h)):%H:%M}"
     return {
         "key": loc.key,
