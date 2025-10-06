@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Core engine for MTB Ride Finder with a date selector (0–14 days).
-Patched to fix rising trail scores after rain by:
-- Suppressing dry-streak bonuses when recent effective rainfall is present
-- Stronger time-aware mixing of last 24h rainfall into the current day
+MTB Ride Finder — strict rainfall fix
+- Strong near-term penalty from last 24h rain (hourly, time-aware)
+- Composite wetness index from last 0–7 days daily totals (monotonic: more rain => lower score)
+- Caps maximum dryness when it has been wet recently
 """
 import argparse
 import math
@@ -117,94 +117,63 @@ def fetch_open_meteo(lat: float, lon: float, timezone: str, past_days: int = 7, 
     _WEATHER_CACHE[key] = (now, data)
     return data
 
-# ---------- Trail dryness (patched) ----------
-def _drain_factor(drainage: str) -> float:
-    if drainage in ("trail_centre", "rocky"):
-        return 1.0
-    if drainage in ("mixed_long_mud", "moor_slow"):
-        return 1.5
-    return 1.2  # "mixed" fallback
+# ---------- Strict rainfall-sensitive dryness ----------
+def _alpha_for(drainage: str) -> float:
+    # Larger alpha => stronger penalty for same wetness (wetter soils)
+    return {
+        "trail_centre": 0.030,
+        "rocky": 0.033,
+        "mixed": 0.045,
+        "mixed_long_mud": 0.060,
+        "moor_slow": 0.070,
+    }.get(drainage, 0.045)
 
-def _season_base_days(season: str) -> float:
-    if season == "summer": return 5.0
-    if season == "winter": return 10.0
-    return 7.5  # spring/autumn
+def _recent_caps(recent_eff: float) -> float:
+    # Cap the maximum dryness score based on last 24h effective rain
+    if recent_eff >= 15.0: return 35.0
+    if recent_eff >= 10.0: return 45.0
+    if recent_eff >= 6.0:  return 60.0
+    if recent_eff >= 3.0:  return 75.0
+    return 100.0
 
-def _consecutive_dry_days(daily_mm: list, end_idx: int, dry_thresh_mm: float = 1.0, lookback: int = 30) -> int:
-    cnt = 0
-    i = end_idx
-    while i >= 0 and cnt < lookback:
-        if daily_mm[i] <= dry_thresh_mm:
-            cnt += 1
-            i -= 1
-        else:
-            break
-    return cnt
+def _slice_safe(arr, start, end_inclusive):
+    start = max(0, start); end_inclusive = min(end_inclusive, len(arr)-1)
+    if end_inclusive < start: return []
+    return arr[start:end_inclusive+1]
 
-def evaluate_trail_dryness(
+def _wetness_index(daily_mm: list, end_idx: int) -> float:
+    """Composite wetness from last 0..7 days daily totals (no hourly here).
+    Heavier weights on most recent days; monotonic with rain amount."""
+    if not daily_mm or end_idx < 0: return 0.0
+    d0 = daily_mm[end_idx] if end_idx >= 0 else 0.0
+    d1 = daily_mm[end_idx-1] if end_idx-1 >= 0 else 0.0
+    d2 = daily_mm[end_idx-2] if end_idx-2 >= 0 else 0.0
+    # Days 3..7
+    tail = _slice_safe(daily_mm, end_idx-7, end_idx-3)
+    # Weights: most recent dominates
+    w_recent = 0.60*d0 + 0.50*d1 + 0.40*d2
+    w_tail = 0.0
+    tail_weights = [0.25, 0.20, 0.16, 0.12, 0.10]  # for d3..d7 if present
+    for i, val in enumerate(reversed(tail)):  # d3 closest gets biggest of these weights
+        w_tail += val * tail_weights[i] if i < len(tail_weights) else 0.05*val
+    return max(0.0, w_recent + w_tail)
+
+def evaluate_trail_dryness_strict(
     drainage: str,
     season: str,
     daily_mm: list,
     end_idx: int,
-    window: int = 5,
     recent_eff_mm: float = 0.0,
 ) -> float:
-    """
-    0..100 where higher = drier.
-    - Exponential decay on weighted recent rain (daily totals).
-    - Dry-streak bonus is suppressed if recent effective rainfall (last ~24h) is present.
-    """
+    """Monotonic rainfall->wetness mapping with recent caps.
+    Higher = drier; immediately penalises recent rain and recent daily totals."""
     if not daily_mm or end_idx < 0:
         return 50.0
-
-    # Weighted window over the last N days (most recent day highest weight)
-    base_weights = [0.40, 0.25, 0.18, 0.11, 0.06, 0.04, 0.02]
-    w = base_weights[:max(1, min(window, len(base_weights)))]
-    w_sum = sum(w)
-    w = [x / w_sum for x in w]
-
-    idx0 = max(0, end_idx - (len(w) - 1))
-    mm_window = daily_mm[idx0:end_idx + 1]
-    if len(mm_window) < 1:
-        return 50.0
-    # Align weights to the available slice (most recent rain = highest weight)
-    w = w[-len(mm_window):]
-    weighted_mm = sum(m * ww for m, ww in zip(mm_window[::-1], w))
-
-    # Base dryness from exponential decay (more rain => lower score)
-    k_map = {"trail_centre": 0.030, "rocky": 0.033, "mixed": 0.042, "mixed_long_mud": 0.052, "moor_slow": 0.062}
-    k = k_map.get(drainage, 0.042)
-    base_score = clamp(100.0 * math.exp(-k * weighted_mm), 0.0, 100.0)
-
-    # Dry-streak multiplier (historical memory), gated by recent rain
-    dry_days = _consecutive_dry_days(daily_mm, end_idx, dry_thresh_mm=1.0, lookback=30)
-    base_days = _season_base_days(season)
-    factor = _drain_factor(drainage)
-    days_needed = base_days * factor
-    streak_ratio = clamp(dry_days / max(1.0, days_needed), 0.0, 1.0)
-
-    # Conservative streak multiplier (0.60..0.90)
-    damp_streak = 0.60 + 0.30 * streak_ratio
-
-    # Suppress when there’s recent rain
-    reff = max(0.0, float(recent_eff_mm))
-    if reff >= 12.0:
-        damp_recent = 0.55
-    elif reff >= 8.0:
-        damp_recent = 0.65
-    elif reff >= 4.0:
-        damp_recent = 0.75
-    elif reff >= 2.0:
-        damp_recent = 0.85
-    else:
-        damp_recent = 1.00
-
-    if reff >= 2.0:
-        damp_streak = min(damp_streak, 0.80)
-
-    multiplier = damp_streak * damp_recent
-    final = clamp(base_score * multiplier, 0.0, 100.0)
-    return final
+    wet_idx = _wetness_index(daily_mm, end_idx)
+    alpha = _alpha_for(drainage)
+    base = 100.0 * math.exp(-alpha * wet_idx)
+    cap = _recent_caps(max(0.0, recent_eff_mm))
+    return clamp(min(base, cap), 0.0, 100.0)
 
 # ---------- Drive & proximity ----------
 def _haversine_km(lat1, lon1, lat2, lon2):
@@ -306,7 +275,7 @@ def assemble_reason(loc: Location, total: float, tr_s: float, prox_s: float, ter
                     depart: dt.datetime, duration_h: float, drive_est: int,
                     wind_mean: float, gust_mean: float, rain_prob: float) -> List[str]:
     notes = []
-    notes.append(f"Trail score {int(tr_s)}/100 (recent rain lowers score; dry-day streak raises score).")
+    notes.append(f"Trail score {int(tr_s)}/100 (recent rain lowers score quickly; recovers only after dry days).")
     notes.append(f"Wind: {int(wind_mean)} avg (gust {int(gust_mean)}).")
     notes.append(f"Rain probability in window: {int(rain_prob)}%.")
     if drive_est > 0: notes.append(f"Drive: ~{drive_est} min at {depart:%H:%M}. Proximity {int(prox_s)}.")
@@ -354,8 +323,6 @@ def _find_day_index(daily_times: list, target_date: dt.date) -> int:
     return -1
 
 def _effective_recent_mm(hourly: dict, depart_dt: dt.datetime, lookback_h: int = 24) -> float:
-    """Weighted sum of hourly precipitation in the lookback window ending at depart_dt.
-    Minute-level sensitive, with higher weight for the last 6–12 hours."""
     times = [dt.datetime.fromisoformat(t) for t in hourly.get("time", [])]
     vals = hourly.get("precipitation", [])
     if not times or not vals:
@@ -387,13 +354,7 @@ def trail_score_for(
     target_date: dt.date,
     depart_dt: dt.datetime,
     mode: str = "time_aware",
-    window: int = 5
 ) -> float:
-    """
-    Unified trail score for a specific ride date.
-    - time_aware: strengthen impact of last ~24h rain (dominates near-term).
-    - daily: use only daily totals (forecasts more than 1 day ahead).
-    """
     hourly = data.get("hourly", {})
     daily = data.get("daily", {})
     precip = list(daily.get("precipitation_sum", []))
@@ -418,25 +379,18 @@ def trail_score_for(
     if mode == "time_aware":
         recent_eff = _effective_recent_mm(hourly, depart_dt, lookback_h=24)
 
-    # Mix recent_eff into today's bucket with strong penalty
-    synth = precip.copy()
-    if mode == "time_aware":
-        base = synth[idx] if idx < len(synth) else 0.0
-        mixed = max(base, 0.6 * recent_eff) + 0.2 * recent_eff
-        synth[idx] = mixed
-
-    return evaluate_trail_dryness(
+    # Strict evaluator uses last 0..7 daily totals + recent caps
+    return evaluate_trail_dryness_strict(
         loc.drainage,
         season,
-        synth,
+        precip,
         end_idx=idx,
-        window=window,
         recent_eff_mm=recent_eff if mode == "time_aware" else 0.0
     )
 
 def trail_condition_for_date(loc: Location, season: str, target_dt: dt.datetime, mode: str) -> float:
     data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=15, forecast_days=2)
-    return trail_score_for(loc, season, data, target_dt.date(), target_dt, mode=mode, window=5)
+    return trail_score_for(loc, season, data, target_dt.date(), target_dt, mode=mode)
 
 # ----- Score a single location -----
 def score_location(
@@ -455,7 +409,7 @@ def score_location(
     data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=15, forecast_days=2)
     hourly = data["hourly"]
     wx_s = score_weather(hourly, when_dt, duration_h)
-    tr_s = trail_score_for(loc, season, data, when_dt.date(), when_dt, mode=trail_mode, window=5)
+    tr_s = trail_score_for(loc, season, data, when_dt.date(), when_dt, mode=trail_mode)
 
     hk = None; hcoords = None
     if home_key is not None or home_coords is not None:
@@ -516,19 +470,19 @@ def trail_condition_series(loc: Location, season: str, days: int = 10, window: i
     if cached and (now - cached[0] < 3600):
         return cached[1]
 
-    data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=max(30, days + window + 10), forecast_days=0)
+    data = fetch_open_meteo(loc.lat, loc.lon, LONDON_TZ, past_days=max(30, days + 10), forecast_days=0)
     daily = data.get("daily", {})
     precip = daily.get("precipitation_sum", [])
-    if not precip or len(precip) < days + window:
+    if not precip or len(precip) < days + 3:
         res = [50.0] * days
         _TRAIL_SERIES_CACHE[ck] = (now, res)
         return res
 
-    upto = len(precip) - 1  # exclude "today"
-    start = max(window - 1, upto - days)
+    upto = len(precip) - 1  # exclude "today" partial
+    start = max(0, upto - days + 1)
     series = []
-    for end_idx in range(start, upto):
-        score = evaluate_trail_dryness(loc.drainage, season, precip, end_idx=end_idx, window=window, recent_eff_mm=0.0)
+    for end_idx in range(start, upto + 1):
+        score = evaluate_trail_dryness_strict(loc.drainage, season, precip, end_idx=end_idx, recent_eff_mm=0.0)
         series.append(round(score, 1))
     series = series[-days:]
     _TRAIL_SERIES_CACHE[ck] = (now, series)

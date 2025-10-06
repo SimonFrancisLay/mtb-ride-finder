@@ -340,11 +340,11 @@ st.header("Trail conditions")
 
 # History table (daily aggregate, last 10 days)
 with st.expander("History (last 10 days) — daily averages (does not reflect start time)", expanded=False):
-    days = 10; window = 5
+    days = 10
     season_tc = season_val
     data_hist = {}
     for loc in locs:
-        series = trail_condition_series(loc, season_tc, days=days, window=window)
+        series = trail_condition_series(loc, season_tc, days=days, window=5)
         data_hist[key_to_name[loc.key]] = series
     today_dt = dt.date.today()
     dates = [(today_dt - dt.timedelta(days=(days - i))) for i in range(1, days+1)]
@@ -356,7 +356,7 @@ with st.expander("History (last 10 days) — daily averages (does not reflect st
     except Exception:
         st.warning("Matplotlib not available — showing table without heatmap shading.")
         st.dataframe(df, use_container_width=True)
-    st.caption("Each cell is a trail condition score (0–100) for that day, computed from the preceding 5-day rainfall at that location.")
+    st.caption("Higher number = drier. Recent rain now *reduces* scores immediately; recovery is gradual.")
 
 # Projection map for the selected date
 with st.expander("Projection for selected date — reflects selected start time", expanded=True):
