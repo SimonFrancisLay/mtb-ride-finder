@@ -20,7 +20,7 @@ from mtb_agent import (
     set_weight_override,
     trail_condition_series_legacy,
     trail_condition_for_date_outlook,
-    reload_config,  # 👈 NEW
+    reload_config,
 )
 
 # 👇 Force reload of config.yaml on every app run
