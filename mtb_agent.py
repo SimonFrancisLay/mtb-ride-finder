@@ -18,6 +18,19 @@ def _load_yaml(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
+def reload_config() -> None:
+    """Force reload of config.yaml and refresh global LOCATIONS + DEFAULT_WEIGHTS."""
+    global LOCATIONS, DEFAULT_WEIGHTS
+    data = _load_yaml(CFG_PATH)
+    DEFAULT_WEIGHTS = data.get("weights", DEFAULT_WEIGHTS)
+    new_locs = []
+    for d in data.get("locations", []):
+        try:
+            new_locs.append(_location_from_dict(d))
+        except Exception:
+            pass
+    LOCATIONS = new_locs
+
 @dataclass
 class Location:
     key: str

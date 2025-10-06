@@ -13,6 +13,7 @@ from mtb_agent import (
     LOCATIONS,
     DEFAULT_WEIGHTS,
     season_from_date,
+    reload_config,
     score_location,
     set_tech_bias_override,
     set_prox_override,
@@ -45,6 +46,10 @@ def fmt_date(d: dt.date):
 # ---------------- Sidebar controls ----------------
 with st.sidebar:
     st.header("Daily knobs")
+
+    if st.button("🔄 Reload config.yaml from disk"):
+    reload_config()
+    st.success("Config reloaded from disk.")
 
     # Regions selector
     regions_sorted = sorted({r for r in key_to_region.values() if r})
