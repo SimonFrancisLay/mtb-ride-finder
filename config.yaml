@@ -25,21 +25,6 @@ locations:
       Very tolerant to rain; minimal maintenance impact.
       Great backup when hills are stormy or ruined by mud.
 
-  - key: hayfield
-    region: "NW England"
-    name: Dark Peak (Hayfield)
-    lat: 53.378
-    lon: -1.948
-    drive_min_typical: [0, 0]
-    terrain: "hills, steep, technical"
-    drainage: "rocky"
-    mud_sensitivity: "med"
-    duration_range: [1.0, 6.0]
-    notes: |
-      Rocky descents and exposed moor edge climbs.
-      Stays wet in winter once saturated; wind exposure is a factor.
-      Superb when dry/high pressure, tough but rewarding otherwise.
-
   - key: malham
     region: "Yorkshire Dales"
     name: Malham & Gordale
