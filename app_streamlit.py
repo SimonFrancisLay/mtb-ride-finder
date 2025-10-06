@@ -50,10 +50,6 @@ def fmt_date(d: dt.date):
 with st.sidebar:
     st.header("Daily knobs")
 
-    if st.button("🔄 Reload config.yaml from disk"):
-        reload_config()
-        st.success("Config reloaded from disk.")
-
     # Regions selector
     regions_sorted = sorted({r for r in key_to_region.values() if r})
     region_sel = st.multiselect("Region(s)",
@@ -87,6 +83,11 @@ with st.sidebar:
     st.caption("⚡ Weather and drive estimates update at most once per hour (cached).")
 
     with st.expander("Advanced scoring & options", expanded=False):
+
+        if st.button("🔄 Reload config.yaml from disk"):
+            reload_config()
+            st.success("Config reloaded from disk.")
+        
         use_defaults = st.checkbox("Use default weights from config", value=True)
         if use_defaults:
             weights = DEFAULT_WEIGHTS.copy()
@@ -104,6 +105,7 @@ with st.sidebar:
                 "terrain_fit": w_terr/total,
                 "secondary": w_sec/total,
             }
+            
 
 depart_dt_raw = dt.datetime.combine(ride_date, depart)
 # snap to hour so "updates once per hour" behaviour is consistent
