@@ -320,24 +320,29 @@ with st.expander("Projection for selected date — reflects selected start time"
     st.caption(f"Mode: **{mode_note}** — follows the ride date selector above.")
     outlook_rows = []
 
+    # Discrete colour bands so it doesn't all look green
+    def color_for_score(s: float) -> list[int]:
+        # s = 0 (worst/wet) … 100 (best/dry)
+        if s >= 80:   # dry / best
+            return [0, 170, 0, 220]        # green
+        if s >= 65:   # decent
+            return [240, 200, 0, 220]      # yellow
+        if s >= 50:   # marginal
+            return [240, 130, 0, 220]      # orange
+        return [200, 40, 40, 220]          # red (wet / poor)
+
     for loc in locs:
         score = trail_condition_for_date_outlook(loc, season_val, depart_dt, mode=trail_mode_eff)
         lat, lon = loc_lookup.get(loc.key, (None, None))
         if lat is None:
             continue
         s = max(0.0, min(100.0, score))
-
-        # 🌈 Red = wetter (low scores), Green = drier (high scores)
-        r = int(255 * (1.0 - s / 100.0))
-        g = int(255 * (s / 100.0))
-        b = 0
-
         outlook_rows.append({
             "name": key_to_name[loc.key],
             "lat": lat,
             "lon": lon,
             "score": round(score, 1),
-            "color": [r, g, b, 220],
+            "color": color_for_score(s),
             "radius": 1000 + 30 * s,
         })
 
@@ -367,6 +372,10 @@ with st.expander("Projection for selected date — reflects selected start time"
                 "style": {"backgroundColor": "rgba(30,30,30,0.9)", "color": "white"},
             },
         )
+        st.pydeck_chart(deck, use_container_width=True)
+        st.caption("Colour scale: **Red = wettest/poorest**, **Orange = marginal**, **Yellow = decent**, **Green = driest/best**.")
+    else:
+        st.info("No locations available to display.")        )
         st.pydeck_chart(deck, use_container_width=True)
         st.caption("Colour scale: **Red = wettest**, **Yellow = moderate**, **Green = driest**. "
                    "Higher values indicate better trail conditions.")
