@@ -219,3 +219,245 @@ locations:
       Epic big-mountain rock terrain; very remote.
       Never truly muddy; weather and wind define rideability.
       Bucket-list terrain for strong riders in good conditions.
+
+  # ======================= NW England / Peaks / Lakes =======================
+  - key: hayfield
+    region: "NW England"
+    name: Dark Peak (Hayfield)
+    lat: 53.378
+    lon: -1.948
+    drive_min_typical: [0, 0]
+    terrain: "hills, steep, technical"
+    drainage: "rocky"
+    mud_sensitivity: "med"
+    duration_range: [1.0, 6.0]
+    notes: |
+      Rocky descents and exposed moor edge climbs.
+      Stays wet in winter once saturated; wind exposure is a factor.
+      Superb when dry/high pressure, tough but rewarding otherwise.
+
+  - key: marple
+    region: "NW England"
+    name: Dark Peak (Marple)
+    lat: 53.394
+    lon: -2.062
+    drive_min_typical: [0, 0]
+    terrain: "hills, technical"
+    drainage: "mixed"
+    mud_sensitivity: "high"
+    duration_range: [1.0, 2.5]
+    notes: |
+      Punchy climbs and tech bits; great start to link a longer Hayfield loop.
+      Turns muddy quickly after even modest rain; better in breezy dries.
+      Best for short-to-medium blasts or as a connector hub.
+
+  - key: ladybower
+    region: "NW England"
+    name: Dark Peak (Ladybower)
+    lat: 53.382
+    lon: -1.720
+    drive_min_typical: [0, 0]
+    terrain: "hills, steep, technical"
+    drainage: "mixed_long_mud"
+    mud_sensitivity: "high"
+    duration_range: [2.5, 5.0]
+    notes: |
+      Big climbs and legendary rocky descents; iconic scenery.
+      Peaty catchments mean it turns muddy fast and dries slowly.
+      Magical in settled spells; punishing in long wet runs.
+
+  - key: winter_hill
+    region: "NW England"
+    name: West Pennine Moors (Winter Hill)
+    lat: 53.622
+    lon: -2.513
+    drive_min_typical: [0, 0]
+    terrain: "hills, moor, some_tech"
+    drainage: "mixed_long_mud"
+    mud_sensitivity: "high"
+    duration_range: [1.0, 5.0]
+    notes: |
+      Moorland tracks with rocky interludes; big-sky and exposed.
+      Peat holds water; can be soggy after storms.
+      Great when breezy/drying or with hard winter frosts.
+
+  - key: gisburn
+    region: "NW England"
+    name: Gisburn Forest (Trail Centre)
+    lat: 54.001
+    lon: -2.360
+    drive_min_typical: [0, 0]
+    terrain: "trail_centre, technical, distance"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 4.0]
+    notes: |
+      Stone-armoured reds and features keep riding consistent when wet.
+      Good year-round option; sheltered forest mitigates wind.
+      Easy to dial intensity by lapping sections.
+
+  - key: whinlatter
+    region: "NW England"
+    name: Whinlatter (Trail Centre)
+    lat: 54.611
+    lon: -3.208
+    drive_min_typical: [0, 0]
+    terrain: "trail_centre, technical"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 3.5]
+    notes: |
+      Fast-draining surfaced trails with steady gradients.
+      Forested, wind-sheltered; great wet-weather fallback.
+      Compact loops suit time-boxed rides.
+
+  - key: grizedale
+    region: "NW England"
+    name: Grizedale Forest
+    lat: 54.337
+    lon: -3.039
+    drive_min_typical: [0, 0]
+    terrain: "hills, some_tech"
+    drainage: "mixed"
+    mud_sensitivity: "med"
+    duration_range: [2.0, 4.0]
+    notes: |
+      Bridleway/forestry mash-up with rocky lanes and views.
+      Mixed drainage; some lines hold water.
+      Flexible medium-length riding near South Lakes.
+
+  - key: windermere
+    region: "NW England"
+    name: South Lakes (Windermere)
+    lat: 54.380
+    lon: -2.907
+    drive_min_typical: [0, 0]
+    terrain: "hills, some_tech"
+    drainage: "mixed_long_mud"
+    mud_sensitivity: "high"
+    duration_range: [2.5, 5.0]
+    notes: |
+      Steep climbs and bridleway tech with classic Lakes rock.
+      Can feature longer muddy stretches in wet spells.
+      Rewarding during settled windows or crisp winter days.
+
+  - key: keswick
+    region: "NW England"
+    name: North Lakes (Keswick)
+    lat: 54.601
+    lon: -3.136
+    drive_min_typical: [0, 0]
+    terrain: "hills, steep, technical"
+    drainage: "rocky"
+    mud_sensitivity: "med"
+    duration_range: [1.5, 3.0]
+    notes: |
+      Shorter but spicier Lakes loops; punchy, rocky, and exposed.
+      Rock holds up well but wind/rain can be savage.
+      Top choice for sharp, high-quality tech sessions.
+
+  # ======================= 7Stanes (Scottish Borders) =======================
+  - key: glentress
+    region: "Scottish Borders"
+    name: 7Stanes — Glentress
+    lat: 55.650
+    lon: -3.146
+    drive_min_typical: [0, 0]
+    terrain: "trail_centre, technical, hills"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [2.0, 5.0]
+    notes: |
+      Premier Scottish trail centre; surfaced and consistent.
+      Holds up in almost all weather; sheltered in forest.
+      Balanced climbs and descents make it ideal for all riders.
+
+  - key: innerleithen
+    region: "Scottish Borders"
+    name: 7Stanes — Innerleithen
+    lat: 55.619
+    lon: -3.065
+    drive_min_typical: [0, 0]
+    terrain: "steep, technical, hills"
+    drainage: "rocky"
+    mud_sensitivity: "med"
+    duration_range: [2.0, 5.0]
+    notes: |
+      Steeper, more DH-oriented natural feel; rocky, drains well.
+      Great in dry spells; still workable under light rain.
+      A demanding venue for experienced riders.
+
+  - key: kirroughtree
+    region: "Scottish Borders"
+    name: 7Stanes — Kirroughtree
+    lat: 54.954
+    lon: -4.457
+    drive_min_typical: [0, 0]
+    terrain: "trail_centre, technical, distance"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [2.0, 5.0]
+    notes: |
+      Granite slabs and surfaced trails; very wet tolerant.
+      Climbs flow smoothly; great option in winter.
+      One of the most reliable year-round rides in Scotland.
+
+  - key: dalbeattie
+    region: "Scottish Borders"
+    name: 7Stanes — Dalbeattie
+    lat: 54.931
+    lon: -3.822
+    drive_min_typical: [0, 0]
+    terrain: "trail_centre, technical"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 4.0]
+    notes: |
+      Slab features and rock lines; rides the same wet or dry.
+      Compact loops with consistent drainage.
+      Excellent wet-weather technical training.
+
+  - key: mabie
+    region: "Scottish Borders"
+    name: 7Stanes — Mabie
+    lat: 55.025
+    lon: -3.649
+    drive_min_typical: [0, 0]
+    terrain: "trail_centre, some_tech"
+    drainage: "mixed"
+    mud_sensitivity: "med"
+    duration_range: [1.5, 4.0]
+    notes: |
+      Mixed surfaced and natural singletrack.
+      Some sections can hold puddles after prolonged rain.
+      Fun rolling terrain ideal for mixed groups.
+
+  - key: ae
+    region: "Scottish Borders"
+    name: 7Stanes — Ae
+    lat: 55.169
+    lon: -3.390
+    drive_min_typical: [0, 0]
+    terrain: "trail_centre, technical, hills"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 4.0]
+    notes: |
+      Fast-draining surfaced trails plus natural lines.
+      Excellent in wet or dry; one of the most weather-proof options.
+      Sustained climbs, flowing descents, and good facilities.
+
+  - key: glentrool
+    region: "Scottish Borders"
+    name: 7Stanes — Glentrool
+    lat: 55.104
+    lon: -4.537
+    drive_min_typical: [0, 0]
+    terrain: "trail_centre, distance"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 4.0]
+    notes: |
+      Waymarked loops on hard surfaces; very rain tolerant.
+      Long steady gradients perfect for endurance miles.
+      Great all-weather touring base.
