@@ -339,7 +339,7 @@ st.markdown("---")
 st.header("Trail conditions")
 
 # History table (daily aggregate, last 10 days)
-with st.expander("History (last 10 days) — daily aggregates", expanded=False):
+with st.expander("History (last 10 days) — daily averages (does not reflect start time)", expanded=False):
     days = 10; window = 5
     season_tc = season_val
     data_hist = {}
@@ -359,7 +359,7 @@ with st.expander("History (last 10 days) — daily aggregates", expanded=False):
     st.caption("Each cell is a trail condition score (0–100) for that day, computed from the preceding 5-day rainfall at that location.")
 
 # Projection map for the selected date
-with st.expander("Projection for selected date", expanded=True):
+with st.expander("Projection for selected date — reflects selected start time", expanded=True):
     mode_note = "Time-aware (hourly up to start time)" if trail_mode_eff == "time_aware" else "Daily aggregate"
     st.caption(f"Mode: **{mode_note}** — follows the ride date selector above.")
     outlook_rows = []
