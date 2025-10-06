@@ -138,19 +138,70 @@ def rain_response_index(dr: str, ms: str) -> float:
 
 # ----------------------------- Sidebar I/O -----------------------------------
 st.sidebar.subheader("Config file")
+
+def is_writable_dir(path: str) -> bool:
+    try:
+        d = os.path.dirname(os.path.abspath(path)) or os.getcwd()
+        return os.path.isdir(d) and os.access(d, os.W_OK)
+    except Exception:
+        return False
+
 cfg_path = st.sidebar.text_input("Path to config.yaml", value=DEFAULT_CONFIG_PATH)
+resolved = os.path.abspath(cfg_path)
+st.sidebar.caption(f"Resolved path: `{resolved}`")
+
+writable = is_writable_dir(resolved)
+st.sidebar.caption("Directory is writable ✅" if writable else "Directory is not writable ❌ (download instead)")
+
 col_btn1, col_btn2 = st.sidebar.columns(2)
 if col_btn1.button("Load"):
-    st.session_state["cfg_raw"] = load_config(cfg_path)
+    st.session_state["cfg_raw"] = load_config(resolved)
+    st.sidebar.success(f"Loaded from {resolved}")
+
+# Overwrite and backup options
+overwrite_ok = st.sidebar.checkbox("Allow overwrite existing file", value=True)
+backup_on_overwrite = st.sidebar.checkbox("Create timestamped backup when overwriting", value=True)
+
 if col_btn2.button("Save to disk"):
-    cfg = st.session_state.get("cfg_raw") or {"weights":{}, "locations":[]}
+    cfg = st.session_state.get("cfg_raw") or {"weights": {}, "locations": []}
     text = dump_config(cfg)
-    try:
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            f.write(text)
-        st.sidebar.success(f"Saved to {cfg_path}")
-    except Exception as e:
-        st.sidebar.error(f"Failed to save: {e}")
+
+    if not writable:
+        st.sidebar.error("Target directory is not writable here. Use the Download button below and replace the file manually.")
+    else:
+        try:
+            if os.path.exists(resolved):
+                if not overwrite_ok:
+                    st.sidebar.error("File exists and overwrite is disabled. Enable 'Allow overwrite existing file' or change the filename.")
+                else:
+                    # make a backup if requested
+                    if backup_on_overwrite:
+                        ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+                        backup_path = resolved.replace(".yaml", f".backup-{ts}.yaml")
+                        try:
+                            with open(backup_path, "w", encoding="utf-8") as bf:
+                                bf.write(open(resolved, "r", encoding="utf-8").read())
+                            st.sidebar.info(f"Backup created: {backup_path}")
+                        except Exception as e:
+                            st.sidebar.warning(f"Backup failed: {e}")
+                    with open(resolved, "w", encoding="utf-8") as f:
+                        f.write(text)
+                    st.sidebar.success(f"Overwrote {resolved}")
+            else:
+                # fresh write
+                with open(resolved, "w", encoding="utf-8") as f:
+                    f.write(text)
+                st.sidebar.success(f"Saved new file at {resolved}")
+        except Exception as e:
+            st.sidebar.error(f"Failed to save: {e}")
+
+st.sidebar.markdown("---")
+
+uploaded = st.sidebar.file_uploader("Upload config.yaml", type=["yaml","yml"], help="Load a YAML to edit.")
+if uploaded is not None:
+    text = uploaded.read().decode("utf-8")
+    st.session_state["cfg_raw"] = load_yaml(text)
+    st.sidebar.success("Loaded from uploaded file.")
 
 st.sidebar.markdown("---")
 uploaded = st.sidebar.file_uploader("Upload config.yaml", type=["yaml","yml"], help="Load a YAML to edit.")
