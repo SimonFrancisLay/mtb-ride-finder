@@ -23,7 +23,7 @@ from mtb_agent import (
     trail_condition_for_date_outlook,
 )
 
-st.set_page_config(page_title="MTB Ride Options — Manchester", layout="wide")
+st.set_page_config(page_title="MTB Ride Options — Regions", layout="wide")
 
 # ---- SAFETY GUARD: stop early if config has no locations ----
 if not LOCATIONS:
@@ -32,10 +32,11 @@ if not LOCATIONS:
 
 # Lookups
 key_to_name = {l.key: l.name for l in LOCATIONS}
+key_to_region = {l.key: getattr(l, "region", "") for l in LOCATIONS}
 terrain_map = {l.key: set(t.strip() for t in l.terrain.split(",")) for l in LOCATIONS}
 loc_lookup = {l.key: (l.lat, l.lon) for l in LOCATIONS}
 
-st.title("MTB Ride Options — Manchester")
+st.title("MTB Ride Options — Regions")
 today = dt.date.today()
 default_depart = dt.time(8, 0)
 
@@ -47,6 +48,14 @@ def fmt_date(d: dt.date):
 # ---------------- Sidebar controls ----------------
 with st.sidebar:
     st.header("Daily knobs")
+
+    # --- Regions filter (new) ---
+    regions_sorted = sorted({r for r in key_to_region.values() if r})
+    region_sel = st.multiselect(
+        "Region(s)",
+        options=regions_sorted,
+        help="Pick one or more regions to include. Leave empty to include all."
+    )
 
     # Home / Start location
     all_keys = [l.key for l in LOCATIONS]
@@ -120,8 +129,14 @@ set_tech_bias_override(tech_bias)
 set_prox_override(prox_override)
 set_weight_override(weights if not use_defaults else None)
 
-# Filter set
-locs = [l for l in LOCATIONS if (not include_keys or l.key in include_keys) and (l.key not in exclude_keys)]
+# ---------------- Region & include/exclude filters ----------------
+def in_regions(k: str) -> bool:
+    if not region_sel:
+        return True
+    rg = key_to_region.get(k, "")
+    return rg in region_sel
+
+locs = [l for l in LOCATIONS if in_regions(l.key) and (not include_keys or l.key in include_keys) and (l.key not in exclude_keys)]
 
 # ---------------- Scoring helpers ----------------
 def score_all(locs, when_dt, weights_use, trail_mode_key):
@@ -184,10 +199,10 @@ def build_features(rows, exclude_key=None):
             continue
         lat, lon = latlon
         radius_m = 800 + 45 * r["score"]
-        if idx == 1: color = [0, 170, 0, 215]
-        elif idx == 2: color = [255, 200, 0, 215]
-        elif idx == 3: color = [30, 144, 255, 215]
-        else: color = [128, 0, 128, 215]
+        if idx == 1: color = [0, 170, 0, 215]        # #1 green
+        elif idx == 2: color = [255, 200, 0, 215]    # #2 yellow
+        elif idx == 3: color = [30, 144, 255, 215]   # #3 blue
+        else: color = [128, 0, 128, 215]             # others purple
         comps = r["components"]
         feats.append({
             "rank": idx, "name": r["name"], "score": r["score"],
@@ -210,7 +225,7 @@ def build_features_out_of_range(rows, exclude_key=None):
         radius_m = 800 + 45 * r.get("score", 50)
         feats.append({
             "rank": "X", "name": r.get("name", "out-of-range"), "score": r.get("score", 0),
-            "lat": lat, "lon": lon, "radius": radius_m, "color": [128, 0, 128, 0],
+            "lat": lat, "lon": lon, "radius": radius_m, "color": [128, 0, 128, 0],  # hollow purple (alpha=0)
             "weather": r.get("components",{}).get("weather", 0), "trail": r.get("components",{}).get("trail", 0),
             "proximity": r.get("components",{}).get("proximity", 0), "terrain_fit": r.get("components",{}).get("terrain_fit", 0),
             "secondary": r.get("components",{}).get("secondary", 0), "window": r.get("recommend_window", ""),
@@ -285,7 +300,7 @@ else:
         if curve_pick is not None:
             clat, clon = loc_lookup.get(curve_pick["key"], (None, None))
             if clat is not None:
-                tri = triangle_coords(clat, clon, size_m=5000)
+                tri = triangle_coords(clat, clon, size_m=5000)  # larger triangle
                 layers.append(pdk.Layer(
                     "PolygonLayer",
                     data=[{"polygon": tri, "name": curve_pick["name"]}],
@@ -304,7 +319,7 @@ else:
         }
         deck = pdk.Deck(
             layers=layers,
-            initial_view_state=pdk.ViewState(latitude=avg_lat, longitude=avg_lon, zoom=7, pitch=0),
+            initial_view_state=pdk.ViewState(latitude=avg_lat, longitude=avg_lon, zoom=6.8, pitch=0),
             map_style=None,
             tooltip=tooltip,
         )
@@ -354,11 +369,10 @@ with st.expander("History (last 10 days) — daily averages (does not reflect st
     dates = [(today_dt - dt.timedelta(days=(days - i))) for i in range(1, days+1)]
     df = pd.DataFrame(data_hist, index=[d.strftime("%d %b") for d in dates]).T
     try:
-        import matplotlib  # ensure availability for Styler gradients
         styled = df.style.background_gradient(cmap="Greens", axis=1)
         st.dataframe(styled, use_container_width=True)
     except Exception:
-        st.warning("Matplotlib not available — showing table without heatmap shading.")
+        st.warning("Styling unavailable — showing table without heatmap shading.")
         st.dataframe(df, use_container_width=True)
     st.caption("Higher number = drier. Recent rain now *reduces* scores immediately; recovery is gradual.")
 
