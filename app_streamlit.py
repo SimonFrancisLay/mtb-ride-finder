@@ -51,8 +51,8 @@ with st.sidebar:
     st.header("Daily knobs")
 
     if st.button("🔄 Reload config.yaml from disk"):
-    reload_config()
-    st.success("Config reloaded from disk.")
+        reload_config()
+        st.success("Config reloaded from disk.")
 
     # Regions selector
     regions_sorted = sorted({r for r in key_to_region.values() if r})
