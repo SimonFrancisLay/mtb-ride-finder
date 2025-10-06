@@ -288,11 +288,14 @@ st.header("Trail conditions")
 st.markdown("---")
 st.header("Trail conditions")
 
-# History (legacy model)
+# =========================
+# History (legacy model) — discrete colour bands
+# =========================
 with st.expander("History (last 10 days) — legacy rainfall/decay (does not reflect start time)", expanded=False):
     days = 10
     season_tc = season_val
     data_hist = {}
+
     for loc in locs:
         series = trail_condition_series_legacy(loc, season_tc, days=days, window=5)
         data_hist[key_to_name[loc.key]] = series
@@ -301,26 +304,46 @@ with st.expander("History (last 10 days) — legacy rainfall/decay (does not ref
     dates = [(today_dt - dt.timedelta(days=(days - i))) for i in range(1, days + 1)]
     df = pd.DataFrame(data_hist, index=[d.strftime("%d %b") for d in dates]).T
 
+    # Discrete colour bands per cell (same logic as map)
+    def cell_hex(s: float) -> str:
+        # s = 0 (worst/wet) … 100 (best/dry)
+        try:
+            s = float(s)
+        except Exception:
+            return "#FFFFFF"
+        if s >= 80:   # dry / best
+            return "#00AA00"    # green
+        if s >= 65:   # decent
+            return "#F0C800"    # yellow
+        if s >= 50:   # marginal
+            return "#F08200"    # orange
+        return "#C82828"        # red (wet / poor)
+
+    def style_cell(v):
+        return f"background-color: {cell_hex(v)}; color: #000000"
+
     try:
-        # 🌈 Red = wetter (low score), Green = drier (high score)
-        styled = df.style.background_gradient(cmap="RdYlGn", axis=1)
+        styled = df.style.map(style_cell)
         st.dataframe(styled, use_container_width=True)
     except Exception:
         st.dataframe(df, use_container_width=True)
 
     st.caption(
-        "Colour scale: **Red = wettest**, **Yellow = moderate**, **Green = driest**. "
+        "Colour scale: **Red = wettest/poorest**, **Orange = marginal**, "
+        "**Yellow = decent**, **Green = driest/best**. "
         "Higher values indicate better trail conditions. "
-        "Heavy rain drops scores immediately; recovery depends on drainage, mud sensitivity, and season."
+        "History uses daily aggregates; Outlook reflects the selected start time."
     )
-    
-# Outlook (selected date/time)
+
+# =========================
+# Outlook (selected date/time) — discrete colour bands
+# =========================
 with st.expander("Projection for selected date — reflects selected start time", expanded=True):
     mode_note = "Time-aware (hourly up to start time)" if trail_mode_eff == "time_aware" else "Daily aggregate"
     st.caption(f"Mode: **{mode_note}** — follows the ride date selector above.")
     outlook_rows = []
 
-    # Discrete colour bands so it doesn't all look green
+    # Discrete colours to avoid 'all green' when scores cluster
     def color_for_score(s: float) -> list[int]:
         # s = 0 (worst/wet) … 100 (best/dry)
         if s >= 80:   # dry / best
@@ -373,6 +396,7 @@ with st.expander("Projection for selected date — reflects selected start time"
             },
         )
         st.pydeck_chart(deck, use_container_width=True)
-        st.caption("Colour scale: **Red = wettest/poorest**, **Orange = marginal**, **Yellow = decent**, **Green = driest/best**.")
+        st.caption("Colour scale: **Red = wettest/poorest**, **Orange = marginal**, "
+                   "**Yellow = decent**, **Green = driest/best**.")
     else:
         st.info("No locations available to display.")
