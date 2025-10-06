@@ -1,4 +1,7 @@
-# MTB Ride Finder configuration (YAML) — diagnostic build
+# MTB Ride Finder configuration (YAML)
+# - weights: default scoring weights (can be overridden in the app's Advanced panel)
+# - locations: list of ride locations with attributes the app/agent uses
+
 weights:
   weather: 0.25
   trail: 0.35
@@ -7,6 +10,7 @@ weights:
   secondary: 0.05
 
 locations:
+  # --- Home / local ---
   - key: urmston
     name: Mosses and Canals (Urmston)
     lat: 53.448
@@ -18,6 +22,7 @@ locations:
     duration_range: [1.0, 5.0]
     notes: "Start from home; flat gravel; well draining."
 
+  # --- Dark Peak / White Peak / West Pennine ---
   - key: hayfield
     name: Dark Peak (Hayfield)
     lat: 53.378
@@ -49,4 +54,183 @@ locations:
     drainage: "mixed"
     mud_sensitivity: "med"
     duration_range: [2.5, 4.0]
-    notes: "Well-draining limestone sections with some muddier bits."
+    notes: "Well-draining limestone sections interspersed with muddier bits."
+
+  - key: ladybower
+    name: Dark Peak (Ladybower)
+    lat: 53.382
+    lon: -1.720
+    drive_min_typical: [60, 75]
+    terrain: "hills, steep, technical"
+    drainage: "mixed_long_mud"
+    mud_sensitivity: "high"
+    duration_range: [2.5, 5.0]
+    notes: "Great climbs and rocky descents; can turn muddy very easily."
+
+  - key: winter_hill
+    name: West Pennine Moors (Winter Hill)
+    lat: 53.622
+    lon: -2.513
+    drive_min_typical: [30, 45]
+    terrain: "hills, moor, some_tech"
+    drainage: "mixed_long_mud"
+    mud_sensitivity: "high"
+    duration_range: [1.0, 5.0]
+    notes: "Mix of rocky and peat/mud; exposed; good range of ride lengths."
+
+  # --- Wales ---
+  - key: llandegla
+    name: North Wales (Llandegla)
+    lat: 53.067
+    lon: -3.115
+    drive_min_typical: [60, 75]
+    terrain: "trail_centre, technical, distance"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.0, 3.0]
+    notes: "Maintained trail centre; consistent surfaces when wet."
+
+  - key: clwydian
+    name: North Wales (Clwydian Range)
+    lat: 53.162
+    lon: -3.269
+    drive_min_typical: [65, 75]
+    terrain: "hills, some_tech"
+    drainage: "mixed"
+    mud_sensitivity: "med"
+    duration_range: [2.5, 5.0]
+    notes: "Good climbs and fun descents; mixed rock/mud."
+
+  # --- Lakes ---
+  - key: windermere
+    name: South Lakes (Windermere)
+    lat: 54.380
+    lon: -2.907
+    drive_min_typical: [70, 90]
+    terrain: "hills, some_tech"
+    drainage: "mixed_long_mud"
+    mud_sensitivity: "high"
+    duration_range: [2.5, 5.0]
+    notes: "Steep climbing; some extended muddy sections."
+
+  - key: keswick
+    name: North Lakes (Keswick)
+    lat: 54.601
+    lon: -3.136
+    drive_min_typical: [80, 90]
+    terrain: "hills, steep, technical"
+    drainage: "rocky"
+    mud_sensitivity: "med"
+    duration_range: [1.5, 3.0]
+    notes: "Steep, rocky tech; usually better for shorter/moderate rides."
+
+  - key: gisburn
+    name: Gisburn Forest (Trail Centre)
+    lat: 54.001
+    lon: -2.360
+    drive_min_typical: [75, 95]
+    terrain: "trail_centre, technical, distance"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 4.0]
+    notes: "Grippy stone surfacing; holds up in wet."
+
+  - key: whinlatter
+    name: Whinlatter (Trail Centre)
+    lat: 54.611
+    lon: -3.208
+    drive_min_typical: [95, 115]
+    terrain: "trail_centre, technical"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 3.5]
+    notes: "Waymarked red/blue; fast draining."
+
+  - key: grizedale
+    name: Grizedale Forest
+    lat: 54.337
+    lon: -3.039
+    drive_min_typical: [90, 110]
+    terrain: "hills, some_tech"
+    drainage: "mixed"
+    mud_sensitivity: "med"
+    duration_range: [2.0, 4.0]
+    notes: "Forestry tracks plus rocky bridleways; mixed drainage."
+
+  # --- Seven Stanes (Scotland) ---
+  - key: glentress
+    name: 7Stanes — Glentress
+    lat: 55.650
+    lon: -3.146
+    drive_min_typical: [210, 270]
+    terrain: "trail_centre, technical, hills"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [2.0, 5.0]
+    notes: "Premier trail centre surfaces; holds up very well when wet."
+
+  - key: innerleithen
+    name: 7Stanes — Innerleithen
+    lat: 55.619
+    lon: -3.065
+    drive_min_typical: [215, 275]
+    terrain: "steep, technical, hills"
+    drainage: "rocky"
+    mud_sensitivity: "med"
+    duration_range: [2.0, 5.0]
+    notes: "Steeper, more DH-oriented natural feel; rocky, drains well."
+
+  - key: kirroughtree
+    name: 7Stanes — Kirroughtree
+    lat: 54.954
+    lon: -4.457
+    drive_min_typical: [190, 240]
+    terrain: "trail_centre, technical, distance"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [2.0, 5.0]
+    notes: "Granite slabs and surfaced trails; very wet tolerant."
+
+  - key: dalbeattie
+    name: 7Stanes — Dalbeattie
+    lat: 54.931
+    lon: -3.822
+    drive_min_typical: [180, 230]
+    terrain: "trail_centre, technical"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 4.0]
+    notes: "Slab features; good in the wet."
+
+  - key: mabie
+    name: 7Stanes — Mabie
+    lat: 55.025
+    lon: -3.649
+    drive_min_typical: [175, 225]
+    terrain: "trail_centre, some_tech"
+    drainage: "mixed"
+    mud_sensitivity: "med"
+    duration_range: [1.5, 4.0]
+    notes: "Mixture of surfaced and natural; some muddier sections."
+
+  - key: ae
+    name: 7Stanes — Ae
+    lat: 55.169
+    lon: -3.390
+    drive_min_typical: [185, 230]
+    terrain: "trail_centre, technical, hills"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 4.0]
+    notes: "Fast-draining surfaced trails plus natural lines."
+
+  - key: glentrool
+    name: 7Stanes — Glentrool
+    lat: 55.104
+    lon: -4.537
+    drive_min_typical: [200, 250]
+    terrain: "trail_centre, distance"
+    drainage: "trail_centre"
+    mud_sensitivity: "low"
+    duration_range: [1.5, 4.0]
+    notes: "Waymarked loops on hard surfaces; very rain tolerant."
